@@ -5,6 +5,7 @@ import { DATA_DIR, PUBLIC_DIR, validDay, vnClock } from './config.js';
 import { exportCsv, listHistory as fileHistory, readDay as fileRead } from './store.js';
 import { PRIZE_NAMES } from './lottery.js';
 import { SLOTS } from './scheduler.js';
+import { rankPrize8, backtestPrize8, validateParameters } from './prize8-predictor.js';
 
 const STATIC={
   '/':['index.html','text/html; charset=utf-8'],
@@ -44,6 +45,35 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
         return json(res,200,{dates:await db.listHistory()});
       if(url.pathname==='/api/stations' && req.method==='GET')
         return json(res,200,{stations:await db.listStations()});
+      if(url.pathname==='/api/prize8/predict' && req.method==='GET') {
+        const targetDate = url.searchParams.get('date') || vnClock().day;
+        const province = url.searchParams.get('province') || '';
+        if(!validDay(targetDate)) return json(res,400,{error:'Ngày dự đoán phải có định dạng YYYY-MM-DD'});
+        if(!/^[a-zA-Z0-9_-]{1,100}$/.test(province))
+          return json(res,400,{error:'Hãy chọn một đài xổ số miền Nam'});
+        const parameters = {
+          window:Number(url.searchParams.get('window') ?? 52),
+          halfLife:Number(url.searchParams.get('halfLife') ?? 12),
+          recentWeight:Number(url.searchParams.get('recentWeight') ?? 70)/100,
+          topK:Number(url.searchParams.get('topK') ?? 10),
+          backtestDraws:80,
+          alpha:0.5
+        };
+        let p;
+        try { p=validateParameters(parameters); }
+        catch(e) { return json(res,400,{error:e.message}); }
+        if(typeof db.getPrize8History!=='function')
+          return json(res,503,{error:'Cần MySQL để dự đoán giải 8'});
+        const history=await db.getPrize8History({province,before:targetDate,limit:500});
+        const forecast=rankPrize8(history,targetDate,p);
+        const evaluation=backtestPrize8(history,targetDate,p);
+        return json(res,200,{
+          province,name:history.at(-1)?.name||province,
+          targetDate,historyCount:history.length,
+          forecast,backtest:evaluation,
+          notes:'Chỉ dùng lịch sử giải 8 của đài đã chọn trước ngày dự đoán. Đây là xếp hạng thử nghiệm, không phải xác suất trúng.'
+        });
+      }
       if(url.pathname==='/api/stats' && req.method==='GET') {
         const from=url.searchParams.get('from');
         const to=url.searchParams.get('to');

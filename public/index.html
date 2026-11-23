@@ -108,6 +108,56 @@
         <p class="analysis-disclaimer">Xổ số có tính ngẫu nhiên. Thống kê các kỳ trước chỉ mô tả dữ liệu, không chứng minh số nào sẽ xuất hiện ở kỳ sau.</p>
       </section>
 
+      <section class="prediction-section" aria-labelledby="predictionTitle">
+        <div class="section-top">
+          <div>
+            <div class="eyebrow">THỬ NGHIỆM / GIẢI 8</div>
+            <h2 id="predictionTitle">Xếp hạng 00–99 bằng trọng số lịch sử</h2>
+            <p>Chỉ dùng giải 8 của từng đài miền Nam, không sử dụng kết quả từ ngày dự đoán trở đi.</p>
+          </div>
+        </div>
+        <div class="prediction-controls">
+          <label>Ngày cần dự đoán<input type="date" id="predictionDate"></label>
+          <label>Đài XSMN<select id="predictionStation"><option value="">Chọn đài</option></select></label>
+          <label>Số kỳ gần nhất<select id="predictionWindow">
+            <option value="26">26 kỳ</option><option value="52" selected>52 kỳ</option>
+            <option value="104">104 kỳ</option><option value="156">156 kỳ</option>
+          </select></label>
+          <label>Chu kỳ giảm 50% trọng số<select id="predictionHalfLife">
+            <option value="6">6 kỳ</option><option value="12" selected>12 kỳ</option>
+            <option value="26">26 kỳ</option><option value="52">52 kỳ</option>
+          </select></label>
+          <label>Ưu tiên gần đây<select id="predictionWeight">
+            <option value="50">50% gần / 50% dài hạn</option>
+            <option value="70" selected>70% gần / 30% dài hạn</option>
+            <option value="90">90% gần / 10% dài hạn</option>
+          </select></label>
+          <button type="button" class="btn primary" id="predictionBtn">Xếp hạng giải 8</button>
+        </div>
+        <div id="predictionMessage" class="analysis-note" role="status">
+          Chọn đài và ngày, sau đó nhấn “Xếp hạng giải 8”.
+        </div>
+        <div class="prediction-grid">
+          <article class="panel">
+            <h3>10 số có điểm xếp hạng cao nhất</h3>
+            <p class="panel-help">Điểm trọng số không phải xác suất trúng; số 00–99 vẫn có thể xuất hiện ở kỳ tới.</p>
+            <div id="predictionTop" class="prediction-top"><p class="placeholder">Chưa có kết quả xếp hạng.</p></div>
+          </article>
+          <article class="panel">
+            <h3>Kiểm định trên các kỳ trong quá khứ</h3>
+            <p class="panel-help">Mỗi kỳ chỉ học từ các kỳ trước đó (walk-forward backtest).</p>
+            <div id="predictionBacktest" class="prediction-backtest">
+              <p class="placeholder">Chưa có kết quả backtest.</p>
+            </div>
+          </article>
+        </div>
+        <p class="analysis-disclaimer">
+          Phương pháp này chỉ là giả thuyết thống kê. Nếu các kỳ quay độc lập và công bằng,
+          dữ liệu cũ không tạo ra khả năng dự đoán đáng tin cậy. Hãy xem backtest như kiểm định,
+          không phải bảo đảm sẽ trúng thưởng.
+        </p>
+      </section>
+
       <section class="help-row"><div class="mini-icon">◷</div><div>
         <strong>Tự quét XSMN khi Node.js đang chạy</strong>
         <p>17:00, 18:00, 19:00 và quét bù 07:30 sáng hôm sau (giờ Việt Nam). Dữ liệu chính lưu MySQL local; JSON là bản sao dự phòng.</p>

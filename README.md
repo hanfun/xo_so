@@ -152,3 +152,48 @@ xo_so/
 ├── tests/app.test.js
 └── data/                 # JSON backup (git ignored)
 ```
+
+
+## 9. Xếp hạng thử nghiệm giải 8 theo trọng số (00–99)
+
+Vào phần **“Xếp hạng 00–99 bằng trọng số lịch sử”** trên dashboard local, chọn **một đài XSMN**, ngày cần dự đoán và các tham số rồi nhấn **Xếp hạng giải 8**.
+
+**Phạm vi:** chỉ dùng **giải 8** (một số có hai chữ số trong mỗi kỳ của đài đã chọn), không trộn giải đặc biệt hay các đài khác.
+
+**Cách tính điểm:**
+
+- Dùng tối đa **52 kỳ trước ngày dự đoán** (tùy chọn 26, 52, 104 hoặc 156 kỳ).
+- Cho các kỳ gần hơn trọng số lớn hơn: kỳ gần nhất nhận trọng số `1`; lùi mỗi `H` kỳ thì trọng số giảm một nửa. Mặc định `H = 12`.
+- Đếm tần suất đã làm mượt bằng pseudo-count `alpha=0.5` cho **100** số từ `00` đến `99` (tránh số ít gặp bị gán trọng số 0).
+- Trộn **70%** điểm tần suất suy giảm theo thời gian với **30%** tần suất lịch sử trong cửa sổ (có thể chọn tỷ trọng 50/50, 70/30, 90/10).
+- Sắp xếp và hiển thị Top 10 số có điểm cao nhất, ngày xuất hiện gần nhất và số lần xuất hiện. **Điểm là chỉ số xếp hạng, không phải xác suất trúng được hiệu chỉnh.**
+
+**Backtest:** kiểm định tối đa 80 kỳ gần đây, tại mỗi kỳ chỉ dùng những kỳ **trước đó** để lập bảng xếp hạng rồi so sánh với giải 8 thật. Hiển thị Top 1 và Top 10 trúng bao nhiêu lần, so sánh mốc kỳ vọng của chọn ngẫu nhiên lần lượt **1%** và **10%** nếu các số là đồng xác suất và độc lập. Kết quả kiểm định lịch sử **không bảo đảm** khả năng dự đoán tương lai.
+
+**Tối thiểu 20 kỳ của mỗi đài** mới hiển thị Top 10; nếu chưa có, dashboard báo thiếu lịch sử. Với các đài miền Nam thường có một kỳ mỗi tuần, nên nhập thử khoảng 2–3 năm dữ liệu để có đủ mẫu huấn luyện và backtest:
+
+```bash
+npm run history:import -- 2024-01-01 2024-12-31
+npm run history:import -- 2025-01-01 2025-12-31
+npm run history:import -- 2026-01-01 2026-11-23
+```
+
+Mỗi lệnh tối đa 366 ngày và chỉ nhập khi API có dữ liệu ngày tương ứng. Nếu chưa nhập lịch sử, ứng dụng **không tự tạo số dự đoán từ dữ liệu giả**.
+
+**Endpoint dự đoán thử nghiệm:**
+
+```http
+GET /api/prize8/predict?date=2026-11-24&province=dong-thap&window=52&halfLife=12&recentWeight=70&topK=10
+```
+
+Trong đó `province` là mã đài lấy từ `GET /api/stations`. API trả về bảng xếp hạng, số kỳ dùng để phân tích, mốc ngày huấn luyện cuối và kết quả backtest. Tham số ngày được lọc nghiêm ngặt: `draw_date < date`, không dùng kết quả của ngày cần dự đoán hoặc tương lai.
+
+**Kiểm thử:**
+
+```bash
+npm test
+```
+
+Có thêm test cho thuật toán trọng số, giữ số 0 đầu, backtest không rò rỉ dữ liệu tương lai, truy vấn MySQL giải 8 theo đài và API.
+
+> **Quan trọng:** xổ số là trò chơi ngẫu nhiên. Một mẫu lịch sử, dù có trọng số gần đây, có thể chỉ phản ánh nhiễu. Không dựa vào bảng xếp hạng để khẳng định khả năng thắng hoặc sử dụng như lời khuyên tài chính.

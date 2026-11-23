@@ -96,7 +96,30 @@ export function createMysqlStore({ pool }) {
       notes:'Tần suất hai số cuối của các lần quay trong bộ lọc, không phải xác suất kỳ sau.'
     };
   }
-  return { readDay,listHistory,listStations,writeDay,getStats,close:()=>pool.end() };
+  async function getPrize8History({ province, before, limit = 500 } = {}) {
+    if (typeof province !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(province))
+      throw new Error('Hãy chọn một đài xổ số miền Nam hợp lệ');
+    if (!validDay(before)) throw new Error('Ngày dự đoán không hợp lệ');
+    if (!Number.isInteger(limit) || limit < 20 || limit > 500)
+      throw new Error('Giới hạn lịch sử phải từ 20 đến 500 kỳ');
+    // IMPORTANT: strict < target date to avoid target draw leakage.
+    const [rows] = await pool.execute(`SELECT
+      p.code AS province, p.name AS name,
+      DATE_FORMAT(d.draw_date,'%Y-%m-%d') AS date, r.number
+      FROM prize_results r
+      JOIN draws d ON d.id=r.draw_id
+      JOIN provinces p ON p.id=d.province_id
+      WHERE p.region='MN' AND p.code=? AND r.prize_code='giai8'
+        AND r.position=1 AND d.draw_date < ?
+      ORDER BY d.draw_date DESC LIMIT ?`, [province, before, limit]);
+    return rows.map(row => ({
+      province: String(row.province),
+      name: String(row.name),
+      date: String(row.date),
+      number: String(row.number)
+    })).reverse();
+  }
+  return { readDay,listHistory,listStations,writeDay,getStats,getPrize8History,close:()=>pool.end() };
 }
 function sqlTime(value) {
   const date=new Date(value);
