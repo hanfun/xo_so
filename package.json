@@ -9,6 +9,8 @@
     "start": "node src/index.js",
     "test": "node --test",
     "db:init": "node src/migrate.js",
+    "db:export": "node src/db-backup.js export",
+    "db:import": "node src/db-backup.js import",
     "collect": "node src/cli.js",
     "history:import": "node src/history.js"
   },
