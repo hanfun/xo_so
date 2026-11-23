@@ -190,7 +190,7 @@ async function loadTop5ForSelected() {
   }
 
   $('top5Title').textContent = `Top 5 Giải 8 — ${station.name}`;
-  $('top5Meta').textContent = 'Đang tính toán xếp hạng V2 từ lịch sử MySQL...';
+  $('top5Meta').textContent = 'Đang tính toán xếp hạng V3 từ lịch sử MySQL...';
   $('top5Cards').replaceChildren(el('p', 'placeholder', 'Đang tải dữ liệu xếp hạng...'));
 
   try {
@@ -199,7 +199,7 @@ async function loadTop5ForSelected() {
       province: station.code,
       topK: '5'
     });
-    const data = await api(`/api/prize8/v2/predict?${params}`);
+    const data = await api(`/api/prize8/v3/predict?${params}`);
     if (station.code !== selectedStation) return;
     if (data.forecast.status === 'insufficient_history') {
       const need = Math.max(0, 20 - data.forecast.windowUsed);
@@ -211,7 +211,7 @@ async function loadTop5ForSelected() {
     }
     renderTop5Result({
       stationName: data.name || station.name,
-      sourceLabel: `Mô hình V2 (${data.modelVersion})`,
+      sourceLabel: `Mô hình V3 (${data.modelVersion})`,
       trainingEnd: data.forecast.trainingEnd,
       historyCount: data.forecast.historyCount,
       items: data.forecast.top.slice(0, 5),

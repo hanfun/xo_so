@@ -2,7 +2,7 @@
 
 > **Project:** [hanfun/xo_so](https://github.com/hanfun/xo_so)
 > **Last reviewed:** 2026-11-23
-> **Status:** V1 & V2 (`v2.0.0`) implemented, experimental ranking & benchmarking platform (not a validated predictor)
+> **Status:** V1, V2 (`v2.0.0`) & V3 (`v3.0.0`) implemented, experimental ranking & benchmarking platform (not a validated predictor)
 > **Primary language:** Vietnamese for UI and docs; JavaScript ES modules for code.
 
 ## 0. Read this first (instructions for coding agents)
@@ -235,6 +235,17 @@ Each component is normalized to sum to `1` over `00..99`, so `Mix_V2` sums to `1
 - Reports **Wilson 95% confidence intervals** for Top-1 and Top-K hit rates, lift vs uniform, **Log-loss**, **multiclass Brier score**, **MRR**, and **average actual rank**.
 - Flags `isStatisticallySignificantTopK` only when `evaluated >= 30` and the lower 95% Wilson CI exceeds `topK%`.
 - `analyzeHistoryCoverage` checks station schedule cadence from `src/station-schedule.js` (e.g. `ho-chi-minh` 2×/week vs 1×/week stations) and reports `coveragePercent`, `missingDraws`, `maxGapDays`, and `gapCount`.
+
+### V3 algorithm (`v3.0.0`) — multi-horizon EWMA + decayed digit marginals + stronger Dirichlet smoothing
+
+Implemented in `src/prize8-predictor.js` (`rankPrize8V3`, `backtestPrize8V3`, `validateV3Parameters`, `DEFAULT_V3_PARAMS`) and exposed via `GET /api/prize8/v3/predict` (and `GET /api/prize8/predict?version=v3`) as well as daily persistence (`POST /api/prize8/daily`).
+
+- Default parameters: `shortHalfLife=6`, `mediumHalfLife=18`, `digitHalfLife=16`, weights `30% / 10% / 15% / 30% / 15%` (`short / medium / long / decayed-digit / uniform`), `alpha=1.0`, `alphaDigit=1.5`.
+- Real MySQL benchmark (22 XSMN stations, 1,710 walk-forward draws / 863 untouched holdout draws before `2026-11-23`):
+  - All 1,710 draws: V3 Top-1 `1.52%` (V2 `1.29%`), MRR `0.05747` (V2 `0.05505`), Log-loss `4.62518` (V2 `4.66808`).
+  - Untouched 863-draw holdout: V3 Top-1 `2.32%` (V2 `1.74%`), Top-10 `11.12%` (V2 `10.66%`), MRR `0.06624` (V2 `0.06049`), Log-loss `4.61801` (V2 `4.65438`).
+  - Rejected signals that degraded holdout performance: Lag-1 digit Markov (`Top5 3.36%`), Gap/Overdue (`Top5 3.59%`), Prev-draw all-prize repeat (`Top5 3.48%`).
+  - None of the models beat theoretical uniform Log-loss (`4.60517`), consistent with fair independent draws.
 
 ## 5. Walk-forward backtest — no future leakage
 

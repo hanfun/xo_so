@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {
   rankPrize8, backtestPrize8, normalizeHistory, validateParameters, analyzePrize8Distribution,
   rankPrize8V2, backtestPrize8V2, validateV2Parameters, analyzeHistoryCoverage, wilsonInterval,
-  V2_MODEL_VERSION, UNIFORM_LOG_LOSS
+  V2_MODEL_VERSION, UNIFORM_LOG_LOSS,
+  rankPrize8V3, backtestPrize8V3, validateV3Parameters, V3_MODEL_VERSION
 } from '../src/prize8-predictor.js';
 import { createMysqlStore } from '../src/mysql-store.js';
 import { createAppServer } from '../src/server.js';
@@ -249,9 +250,53 @@ test('GET V2 prediction endpoints return benchmark comparison while keeping V1 c
     const badSum=await fetch(`${base}/api/prize8/v2/predict?date=2026-11-24&province=dong-thap&recentWeight=50&longWeight=50&digitWeight=10&uniformShrinkage=0`);
     assert.equal(badSum.status,400);
 
-    const badVersion=await fetch(`${base}/api/prize8/predict?version=v3&date=2026-11-24&province=dong-thap`);
+    const v3Res=await fetch(`${base}/api/prize8/v3/predict?date=2026-11-24&province=dong-thap`);
+    assert.equal(v3Res.status,200);
+    const v3Data=await v3Res.json();
+    assert.equal(v3Data.modelVersion,V3_MODEL_VERSION);
+    assert.equal(v3Data.forecast.top.length,10);
+    assert.equal(v3Data.backtest.evaluated,80);
+    assert.ok(v3Data.backtest.models.v3 && v3Data.backtest.models.v2 && v3Data.backtest.models.v1 && v3Data.backtest.models.raw && v3Data.backtest.models.uniform);
+
+    const v3ViaParam=await fetch(`${base}/api/prize8/predict?version=v3&date=2026-11-24&province=dong-thap`);
+    assert.equal(v3ViaParam.status,200);
+    assert.equal((await v3ViaParam.json()).modelVersion,V3_MODEL_VERSION);
+
+    const badV3Sum=await fetch(`${base}/api/prize8/v3/predict?date=2026-11-24&province=dong-thap&shortWeight=50&mediumWeight=50&longWeight=10&digitWeight=0&uniformShrinkage=0`);
+    assert.equal(badV3Sum.status,400);
+
+    const badVersion=await fetch(`${base}/api/prize8/predict?version=v99&date=2026-11-24&province=dong-thap`);
     assert.equal(badVersion.status,400);
   } finally {await new Promise(resolve=>server.close(resolve));}
+});
+
+test('V3 ranking uses multi-horizon EWMA + decayed digit marginals, no leakage, and curbs log-loss vs V2',()=>{
+  const rows=history(90,'2023-01-02',i=>i<60?12:87);
+  const res=rankPrize8V3(rows,'2026-12-01',{topK:10});
+  assert.equal(res.modelVersion,V3_MODEL_VERSION);
+  assert.equal(res.status,'experimental');
+  assert.equal(res.top[0].number,'87');
+  assert.equal(rankPrize8V3([],'2026-01-01').status,'insufficient_history');
+  assert.equal(rankPrize8V3(history(19),'2026-01-01').status,'insufficient_history');
+  const exact20=rankPrize8V3(history(20,'2024-01-01',i=>i%2===0?0:99),'2026-01-01');
+  assert.equal(exact20.status,'experimental');
+  assert.deepEqual(exact20.top.slice(0,2).map(x=>x.number).sort(),['00','99']);
+
+  // No data leakage
+  const seq=history(90,'2023-01-02',i=>(i*17)%100);
+  const target=seq[70].date;
+  const clean=seq.slice(0,70);
+  const polluted=[...clean,{date:target,number:'00'},...seq.slice(71).map(x=>({...x,number:'00'}))];
+  assert.deepEqual(rankPrize8V3(polluted,target),rankPrize8V3(clean,target));
+  assert.deepEqual(backtestPrize8V3(polluted,target,{backtestDraws:40}),backtestPrize8V3(clean,target,{backtestDraws:40}));
+
+  // Stronger Dirichlet smoothing curbs log-loss vs V2 on rotating draws
+  const rotating=history(120,'2022-01-03',i=>i%100);
+  const bt=backtestPrize8V3(rotating,'2026-01-01',{backtestDraws:60,topK:10});
+  assert.equal(bt.evaluated,60);
+  assert.ok(bt.models.v3.logLoss < bt.models.v2.logLoss);
+  assert.ok(bt.comparison.v3VsV2.logLossImprovement > 0);
+  assert.throws(()=>validateV3Parameters({shortWeight:0.5,mediumWeight:0.5,longWeight:0.2,digitWeight:0,uniformShrinkage:0}),/bằng 1/);
 });
 
 test('MySQL savePrize8Predictions is transactional, idempotent, and never overwrites existing predictions',async()=>{

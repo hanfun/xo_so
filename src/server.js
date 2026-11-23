@@ -8,7 +8,9 @@ import { SLOTS } from './scheduler.js';
 import {
   rankPrize8, backtestPrize8, validateParameters, analyzePrize8Distribution,
   rankPrize8V2, backtestPrize8V2, validateV2Parameters, analyzeHistoryCoverage,
-  V2_MODEL_VERSION, DEFAULT_V2_PARAMS
+  V2_MODEL_VERSION, DEFAULT_V2_PARAMS,
+  rankPrize8V3, backtestPrize8V3, validateV3Parameters,
+  V3_MODEL_VERSION, DEFAULT_V3_PARAMS
 } from './prize8-predictor.js';
 import { stationsForDate, stationDetailsForDate, stationDisplayName, XSMN_SCHEDULE_VERSION } from './station-schedule.js';
 
@@ -100,7 +102,7 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
               if(completed.has(province)){skipped.push({province,name,reason:'already_exists'});continue;}
               if(!stationNames.has(province)){skipped.push({province,name,reason:'no_history'});continue;}
               const history=await db.getPrize8History({province,before:targetDate,limit:500});
-              const forecast=rankPrize8V2(history,targetDate,DEFAULT_V2_PARAMS);
+              const forecast=rankPrize8V3(history,targetDate,DEFAULT_V3_PARAMS);
               if(forecast.status!=='experimental'||!forecast.trainingEnd) {
                 skipped.push({province,name,reason:'insufficient_history',historyCount:forecast.historyCount});
                 continue;
@@ -110,9 +112,9 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
                 targetDate,
                 trainingCutoff:forecast.trainingEnd,
                 items:forecast.top,
-                modelKey:'prize8-v2-daily',
-                modelVersion:`${V2_MODEL_VERSION}-daily-${XSMN_SCHEDULE_VERSION}`,
-                description:'Xếp hạng Giải 8 V2 tự động theo ngày',
+                modelKey:'prize8-v3-daily',
+                modelVersion:`${V3_MODEL_VERSION}-daily-${XSMN_SCHEDULE_VERSION}`,
+                description:'Xếp hạng Giải 8 V3 tự động theo ngày',
                 parameters:forecast.params
               });
               if(saved && saved.created===false) {
@@ -144,17 +146,51 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
           return json(res,200,{province,name:results[0]?.name||province,results,hasMore:results.length===limit});
         } catch(e) {return json(res,400,{error:e.message});}
       }
-      if((url.pathname==='/api/prize8/predict' || url.pathname==='/api/prize8/v2/predict') && req.method==='GET') {
-        const version = url.pathname==='/api/prize8/v2/predict'
-          ? 'v2'
-          : (url.searchParams.get('version') || 'v1').toLowerCase();
-        if(version!=='v1' && version!=='v2')
-          return json(res,400,{error:'Phiên bản mô hình chỉ hỗ trợ v1 hoặc v2'});
+      if((url.pathname==='/api/prize8/predict' || url.pathname==='/api/prize8/v2/predict' || url.pathname==='/api/prize8/v3/predict') && req.method==='GET') {
+        const version = url.pathname==='/api/prize8/v3/predict'
+          ? 'v3'
+          : (url.pathname==='/api/prize8/v2/predict'
+            ? 'v2'
+            : (url.searchParams.get('version') || 'v1').toLowerCase());
+        if(version!=='v1' && version!=='v2' && version!=='v3')
+          return json(res,400,{error:'Phiên bản mô hình chỉ hỗ trợ v1, v2 hoặc v3'});
         const targetDate = url.searchParams.get('date') || vnClock().day;
         const province = url.searchParams.get('province') || '';
         if(!validDay(targetDate)) return json(res,400,{error:'Ngày dự đoán phải có định dạng YYYY-MM-DD'});
         if(!/^[a-zA-Z0-9_-]{1,100}$/.test(province))
           return json(res,400,{error:'Hãy chọn một đài xổ số miền Nam'});
+        if(version==='v3') {
+          const parameters = {
+            shortHalfLife:Number(url.searchParams.get('shortHalfLife') ?? DEFAULT_V3_PARAMS.shortHalfLife),
+            mediumHalfLife:Number(url.searchParams.get('mediumHalfLife') ?? DEFAULT_V3_PARAMS.mediumHalfLife),
+            digitHalfLife:Number(url.searchParams.get('digitHalfLife') ?? DEFAULT_V3_PARAMS.digitHalfLife),
+            shortWeight:Number(url.searchParams.get('shortWeight') ?? 30)/100,
+            mediumWeight:Number(url.searchParams.get('mediumWeight') ?? 10)/100,
+            longWeight:Number(url.searchParams.get('longWeight') ?? 15)/100,
+            digitWeight:Number(url.searchParams.get('digitWeight') ?? 30)/100,
+            uniformShrinkage:Number(url.searchParams.get('uniformShrinkage') ?? 15)/100,
+            alpha:Number(url.searchParams.get('alpha') ?? DEFAULT_V3_PARAMS.alpha),
+            alphaDigit:Number(url.searchParams.get('alphaDigit') ?? DEFAULT_V3_PARAMS.alphaDigit),
+            topK:Number(url.searchParams.get('topK') ?? 10),
+            backtestDraws:Number(url.searchParams.get('backtestDraws') ?? 80)
+          };
+          let p;
+          try { p=validateV3Parameters(parameters); }
+          catch(e) { return json(res,400,{error:e.message}); }
+          if(typeof db.getPrize8History!=='function')
+            return json(res,503,{error:'Cần MySQL để dự đoán giải 8'});
+          const history=await db.getPrize8History({province,before:targetDate,limit:500});
+          const coverage=analyzeHistoryCoverage(history,targetDate,province);
+          const forecast=rankPrize8V3(history,targetDate,p);
+          const evaluation=backtestPrize8V3(history,targetDate,p);
+          return json(res,200,{
+            modelVersion:V3_MODEL_VERSION,
+            province,name:history.at(-1)?.name||province,
+            targetDate,historyCount:history.length,
+            coverage,forecast,backtest:evaluation,
+            notes:'Mô hình V3 dùng đa khung suy giảm (ngắn 6 kỳ + trung 18 kỳ), toàn lịch sử, biên đầu/đuôi suy giảm (16 kỳ) và làm mịn Dirichlet mạnh hơn, đối chiếu với V2, V1, tần suất thô và ngẫu nhiên đều.'
+          });
+        }
         if(version==='v2') {
           const parameters = {
             window:Number(url.searchParams.get('window') ?? 52),

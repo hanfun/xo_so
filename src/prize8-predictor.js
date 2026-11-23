@@ -18,6 +18,7 @@ import { XSMN_WEEKLY_SCHEDULE } from './station-schedule.js';
  */
 export const MIN_HISTORY = 20;
 export const V2_MODEL_VERSION = 'v2.0.0';
+export const V3_MODEL_VERSION = 'v3.0.0';
 export const UNIFORM_LOG_LOSS = Math.log(100);
 export const UNIFORM_BRIER = 0.99;
 export const UNIFORM_AVG_RANK = 50.5;
@@ -38,6 +39,21 @@ export const DEFAULT_V2_PARAMS = Object.freeze({
   uniformShrinkage: 0.15,
   alpha: 0.5,
   alphaDigit: 1,
+  topK: 10,
+  backtestDraws: 80
+});
+
+export const DEFAULT_V3_PARAMS = Object.freeze({
+  shortHalfLife: 6,
+  mediumHalfLife: 18,
+  digitHalfLife: 16,
+  shortWeight: 0.30,
+  mediumWeight: 0.10,
+  longWeight: 0.15,
+  digitWeight: 0.30,
+  uniformShrinkage: 0.15,
+  alpha: 1.0,
+  alphaDigit: 1.5,
   topK: 10,
   backtestDraws: 80
 });
@@ -646,6 +662,248 @@ export function backtestPrize8V2(history, targetDate, options = {}) {
     top1: v2.top1,
     topK: v2.topK,
     models: { v2, v1, raw, uniform },
+    comparison,
+    warning: evaluated < 30
+      ? 'Mẫu kiểm định nhỏ (< 30 kỳ): dao động ngẫu nhiên lớn, chưa đủ cơ sở kết luận.'
+      : 'Kết quả kiểm định quá khứ (kể cả khi cao hơn mốc ngẫu nhiên) không chứng minh lợi thế ở kỳ quay công bằng tiếp theo.'
+  };
+}
+
+export function validateV3Parameters(params = {}) {
+  const p = { ...DEFAULT_V3_PARAMS, ...params };
+  for (const key of ['shortHalfLife', 'mediumHalfLife', 'digitHalfLife']) {
+    if (!Number.isFinite(p[key]) || p[key] < 2 || p[key] > 100)
+      throw new Error(`${key} phải nằm trong khoảng 2–100 kỳ`);
+  }
+  const weightKeys = ['shortWeight', 'mediumWeight', 'longWeight', 'digitWeight', 'uniformShrinkage'];
+  for (const key of weightKeys) {
+    if (!Number.isFinite(p[key]) || p[key] < 0 || p[key] > 1)
+      throw new Error(`${key} phải nằm trong khoảng 0–1`);
+  }
+  const weightSum = weightKeys.reduce((sum, key) => sum + p[key], 0);
+  if (Math.abs(weightSum - 1) > 1e-6)
+    throw new Error('Tổng năm trọng số V3 (shortWeight, mediumWeight, longWeight, digitWeight, uniformShrinkage) phải bằng 1');
+  if (!Number.isFinite(p.alpha) || p.alpha <= 0 || p.alpha > 10)
+    throw new Error('alpha phải lớn hơn 0 và không quá 10');
+  if (!Number.isFinite(p.alphaDigit) || p.alphaDigit <= 0 || p.alphaDigit > 10)
+    throw new Error('alphaDigit phải lớn hơn 0 và không quá 10');
+  if (!Number.isInteger(p.topK) || p.topK < 1 || p.topK > 20)
+    throw new Error('topK phải nằm trong khoảng 1–20');
+  if (!Number.isInteger(p.backtestDraws) || p.backtestDraws < 1 || p.backtestDraws > 200)
+    throw new Error('backtestDraws phải nằm trong khoảng 1–200');
+  return p;
+}
+
+function evaluateV3Core(allPast, params) {
+  if (allPast.length < MIN_HISTORY) return { items: [], probs: [] };
+  const p = params;
+  const nRows = allPast.length;
+  const longCounts = new Array(100).fill(0);
+  const shortDecayed = new Array(100).fill(0);
+  const medDecayed = new Array(100).fill(0);
+  const tensDecayed = new Array(10).fill(0);
+  const onesDecayed = new Array(10).fill(0);
+  const lastSeen = new Array(100).fill(null);
+  let shortSum = 0;
+  let medSum = 0;
+  let digitSum = 0;
+  for (let age = 0; age < nRows; age++) {
+    const row = allPast[nRows - 1 - age];
+    const n = Number(row.number);
+    const wShort = Math.pow(0.5, age / p.shortHalfLife);
+    const wMed = Math.pow(0.5, age / p.mediumHalfLife);
+    const wDigit = Math.pow(0.5, age / p.digitHalfLife);
+    longCounts[n] += 1;
+    shortDecayed[n] += wShort;
+    medDecayed[n] += wMed;
+    tensDecayed[Math.floor(n / 10)] += wDigit;
+    onesDecayed[n % 10] += wDigit;
+    shortSum += wShort;
+    medSum += wMed;
+    digitSum += wDigit;
+    if (lastSeen[n] === null) lastSeen[n] = row.date;
+  }
+  const shortDen = shortSum + 100 * p.alpha;
+  const medDen = medSum + 100 * p.alpha;
+  const longDen = nRows + 100 * p.alpha;
+  const digitDen = digitSum + 10 * p.alphaDigit;
+  const probs = new Array(100);
+  const scored = new Array(100);
+  for (let i = 0; i < 100; i++) {
+    const tens = Math.floor(i / 10);
+    const ones = i % 10;
+    const pShort = (shortDecayed[i] + p.alpha) / shortDen;
+    const pMed = (medDecayed[i] + p.alpha) / medDen;
+    const pLong = (longCounts[i] + p.alpha) / longDen;
+    const pDigit = ((tensDecayed[tens] + p.alphaDigit) / digitDen)
+      * ((onesDecayed[ones] + p.alphaDigit) / digitDen);
+    const pUniform = 0.01;
+    const mix = p.shortWeight * pShort
+      + p.mediumWeight * pMed
+      + p.longWeight * pLong
+      + p.digitWeight * pDigit
+      + p.uniformShrinkage * pUniform;
+    probs[i] = mix;
+    scored[i] = {
+      number: String(i).padStart(2, '0'),
+      score: Number((100 * mix).toFixed(5)),
+      observed: longCounts[i],
+      totalObserved: longCounts[i],
+      weightedCount: Number(shortDecayed[i].toFixed(4)),
+      lastSeen: lastSeen[i],
+      components: {
+        short: Number((100 * pShort).toFixed(5)),
+        medium: Number((100 * pMed).toFixed(5)),
+        long: Number((100 * pLong).toFixed(5)),
+        digit: Number((100 * pDigit).toFixed(5)),
+        uniform: 1
+      },
+      _mix: mix,
+      _digit: pDigit
+    };
+  }
+  scored.sort((a, b) =>
+    (b._mix - a._mix)
+    || (b.totalObserved - a.totalObserved)
+    || (b._digit - a._digit)
+    || a.number.localeCompare(b.number)
+  );
+  const items = scored.map(({ _mix, _digit, ...rest }) => rest);
+  return { items, probs };
+}
+
+export function rankPrize8V3(history, targetDate, options = {}) {
+  const params = validateV3Parameters(options);
+  if (typeof targetDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate))
+    throw new Error('Ngày dự đoán không hợp lệ');
+  const past = normalizeHistory(history).filter(row => row.date < targetDate);
+  const cleanParams = {
+    shortHalfLife: params.shortHalfLife,
+    mediumHalfLife: params.mediumHalfLife,
+    digitHalfLife: params.digitHalfLife,
+    shortWeight: params.shortWeight,
+    mediumWeight: params.mediumWeight,
+    longWeight: params.longWeight,
+    digitWeight: params.digitWeight,
+    uniformShrinkage: params.uniformShrinkage,
+    alpha: params.alpha,
+    alphaDigit: params.alphaDigit,
+    topK: params.topK
+  };
+  if (past.length < MIN_HISTORY) {
+    return {
+      modelVersion: V3_MODEL_VERSION,
+      targetDate,
+      status: 'insufficient_history',
+      historyCount: past.length,
+      windowUsed: past.length,
+      trainingStart: past[0]?.date || null,
+      trainingEnd: past.at(-1)?.date || null,
+      top: [],
+      params: cleanParams,
+      disclaimer: 'Điểm xếp hạng V3 (đa khung thời gian + biên đầu/đuôi suy giảm + làm mịn Dirichlet) là chỉ số thống kê thử nghiệm, KHÔNG phải xác suất trúng đã kiểm định. Mỗi số 00–99 có xác suất lý thuyết 1% trong kỳ quay công bằng.'
+    };
+  }
+  const { items } = evaluateV3Core(past, params);
+  return {
+    modelVersion: V3_MODEL_VERSION,
+    targetDate,
+    status: 'experimental',
+    historyCount: past.length,
+    windowUsed: past.length,
+    trainingStart: past[0].date,
+    trainingEnd: past.at(-1).date,
+    top: items.slice(0, params.topK),
+    params: cleanParams,
+    disclaimer: 'Điểm xếp hạng V3 (đa khung thời gian + biên đầu/đuôi suy giảm + làm mịn Dirichlet) là chỉ số thống kê thử nghiệm, KHÔNG phải xác suất trúng đã kiểm định. Mỗi số 00–99 có xác suất lý thuyết 1% trong kỳ quay công bằng.'
+  };
+}
+
+/**
+ * Strict forward-chain V3 backtest comparing V3, V2, V1, Raw full-history frequency,
+ * and theoretical Uniform random baselines on the exact same chronological draws.
+ */
+export function backtestPrize8V3(history, targetDate, options = {}) {
+  const p = validateV3Parameters(options);
+  if (typeof targetDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate))
+    throw new Error('Ngày kiểm định không hợp lệ');
+  const rows = normalizeHistory(history).filter(r => r.date < targetDate);
+  const start = Math.max(MIN_HISTORY, rows.length - p.backtestDraws);
+  const v2Params = { ...DEFAULT_V2_PARAMS, topK: p.topK };
+  const v1Params = { ...DEFAULT_PARAMS, topK: p.topK };
+  const accV3 = createAccumulator();
+  const accV2 = createAccumulator();
+  const accV1 = createAccumulator();
+  const accRaw = createAccumulator();
+  let evaluated = 0;
+  for (let i = start; i < rows.length; i++) {
+    const train = rows.slice(0, i);
+    const target = rows[i].number;
+    recordEvaluation(accV3, evaluateV3Core(train, p), target, p.topK);
+    recordEvaluation(accV2, evaluateV2Core(train, v2Params), target, p.topK);
+    recordEvaluation(accV1, evaluateV1Core(train.slice(-v1Params.window), v1Params), target, p.topK);
+    recordEvaluation(accRaw, evaluateRawCore(train, DEFAULT_V2_PARAMS.alpha), target, p.topK);
+    evaluated += 1;
+  }
+  const v3 = summarizeAccumulator(accV3, evaluated, p.topK);
+  const v2 = summarizeAccumulator(accV2, evaluated, p.topK);
+  const v1 = summarizeAccumulator(accV1, evaluated, p.topK);
+  const raw = summarizeAccumulator(accRaw, evaluated, p.topK);
+  const uniform = {
+    top1: {
+      hits: null, rate: 1, ci95: { low: 1, high: 1 },
+      randomBaselinePercent: 1, liftPoints: 0, liftRatio: 1
+    },
+    topK: {
+      k: p.topK, hits: null, rate: p.topK, ci95: { low: p.topK, high: p.topK },
+      randomBaselinePercent: p.topK, liftPoints: 0, liftRatio: 1
+    },
+    logLoss: Number(UNIFORM_LOG_LOSS.toFixed(5)),
+    logLossVsUniform: 0,
+    brierScore: UNIFORM_BRIER,
+    brierVsUniform: 0,
+    mrr: Number(UNIFORM_MRR.toFixed(5)),
+    avgRank: UNIFORM_AVG_RANK
+  };
+  const diff = (a, b, digits = 2) =>
+    (a == null || b == null) ? null : Number((a - b).toFixed(digits));
+  const comparison = {
+    v3VsUniform: {
+      top1LiftPoints: v3.top1.liftPoints,
+      topKLiftPoints: v3.topK.liftPoints,
+      logLossImprovement: v3.logLossVsUniform,
+      brierImprovement: v3.brierVsUniform,
+      isStatisticallySignificantTopK: Boolean(
+        evaluated >= 30 && v3.topK.ci95.low != null && v3.topK.ci95.low > p.topK
+      )
+    },
+    v3VsV2: {
+      top1DiffPoints: diff(v3.top1.rate, v2.top1.rate, 2),
+      topKDiffPoints: diff(v3.topK.rate, v2.topK.rate, 2),
+      logLossImprovement: diff(v2.logLoss, v3.logLoss, 5),
+      mrrDiff: diff(v3.mrr, v2.mrr, 5)
+    },
+    v3VsV1: {
+      top1DiffPoints: diff(v3.top1.rate, v1.top1.rate, 2),
+      topKDiffPoints: diff(v3.topK.rate, v1.topK.rate, 2),
+      logLossImprovement: diff(v1.logLoss, v3.logLoss, 5),
+      mrrDiff: diff(v3.mrr, v1.mrr, 5)
+    },
+    v3VsRaw: {
+      top1DiffPoints: diff(v3.top1.rate, raw.top1.rate, 2),
+      topKDiffPoints: diff(v3.topK.rate, raw.topK.rate, 2),
+      logLossImprovement: diff(raw.logLoss, v3.logLoss, 5),
+      mrrDiff: diff(v3.mrr, raw.mrr, 5)
+    }
+  };
+  return {
+    modelVersion: V3_MODEL_VERSION,
+    evaluated,
+    evaluationStart: evaluated ? rows[start].date : null,
+    evaluationEnd: evaluated ? rows.at(-1).date : null,
+    top1: v3.top1,
+    topK: v3.topK,
+    models: { v3, v2, v1, raw, uniform },
     comparison,
     warning: evaluated < 30
       ? 'Mẫu kiểm định nhỏ (< 30 kỳ): dao động ngẫu nhiên lớn, chưa đủ cơ sở kết luận.'
