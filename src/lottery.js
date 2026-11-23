@@ -32,13 +32,25 @@ export function validateDraw(key, item, day) {
     ticket_type: typeof item.ticket_type === 'string' ? item.ticket_type : '', prizes
   }};
 }
+export function canonicalProvinceCode(code) {
+  const normalized = String(code || '').trim().toLowerCase().replace(/đ/g, 'd')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (['tp-hcm', 'tp-ho-chi-minh', 'ho-chi-minh'].includes(normalized)) return 'ho-chi-minh';
+  return normalized;
+}
 export function extractSouthPayload(day, payload) {
   if (!validDay(day) || !payload || payload.date !== day
     || !payload.results || typeof payload.results !== 'object' || Array.isArray(payload.results)) {
     throw new Error('Dữ liệu API không đúng ngày hoặc thiếu danh sách kết quả');
   }
-  const entries = Object.entries(payload.results).filter(([, value]) => value && value.region === 'MN');
-  return { date: day, count: entries.length, results: Object.fromEntries(entries) };
+  const normalized = {};
+  for (const [key, value] of Object.entries(payload.results)) {
+    if (!value || value.region !== 'MN') continue;
+    const code = canonicalProvinceCode(value.province || key);
+    normalized[code] = { ...value, province: code };
+  }
+  return { date: day, count: Object.keys(normalized).length, results: normalized };
 }
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 async function readJson(response) {
@@ -77,11 +89,7 @@ async function fetchPrimary(day,{baseUrl,fetchImpl,retries}) {
   throw lastError;
 }
 function stationCode(name) {
-  const normalized=String(name).trim().toLowerCase().replace(/đ/g,'d')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-    .replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
-  if(['tp-hcm','tp-ho-chi-minh','ho-chi-minh'].includes(normalized)) return 'ho-chi-minh';
-  return normalized;
+  return canonicalProvinceCode(name);
 }
 export function adaptXosovnmPayload(day,body) {
   const displayDate=day.split('-').reverse().join('/');
@@ -141,8 +149,9 @@ export function normalizePayload(day, southPayload, sourceUrl, previous = null) 
   const map = new Map();
   for (const old of previous?.results || []) {
     if (old?.region!=='MN') continue;
-    const check = validateDraw(old.province,old,day);
-    if (check.draw) map.set(check.draw.province,check.draw);
+    const code = canonicalProvinceCode(old.province);
+    const check = validateDraw(code, { ...old, province: code }, day);
+    if (check.draw) map.set(check.draw.province, check.draw);
   }
   for(const item of accepted) map.set(item.province,item);
   const results = [...map.values()].sort((a,b)=>a.name.localeCompare(b.name,'vi'));

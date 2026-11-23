@@ -360,7 +360,7 @@ async function scanSelectedDate() {
   $('btnScanToday').textContent = 'Đang quét...';
   setNotice(`Đang quét kết quả XSMN ngày ${selectedDate}...`);
   try {
-    await api(`/api/collect?date=${encodeURIComponent(selectedDate)}`, { method: 'POST' });
+    await api(`/api/collect?date=${encodeURIComponent(selectedDate)}&overwrite=true`, { method: 'POST' });
     await loadScreenForDate(selectedDate, { ensureDaily: false });
   } catch (e) {
     setNotice(`Lỗi quét kết quả: ${e.message}`, 'error');

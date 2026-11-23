@@ -172,7 +172,7 @@ async function scan() {
   $('collectBtn').disabled=true; $('collectBtn').textContent='Đang quét...';
   notice(`Đang lấy kết quả miền Nam ngày ${day}...`);
   try {
-    const data=await api(`/api/collect?date=${encodeURIComponent(day)}`,{method:'POST'});
+    const data=await api(`/api/collect?date=${encodeURIComponent(day)}&overwrite=true`,{method:'POST'});
     if(day===today){
       todayResultCodes=new Set((data.results||[]).map(r=>r.province));
       renderTodaySchedule();

@@ -288,7 +288,9 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
           try {
             if(!overwrite) {
               const existing=await db.readDay(day);
-              if(existing)return json(res,200,{...existing,cached:true});
+              if(existing && existing.status==='complete_by_provider_count') {
+                return json(res,200,{...existing,cached:true});
+              }
             }
             return json(res,200,await collector.collect(day,{force:overwrite}));
           }

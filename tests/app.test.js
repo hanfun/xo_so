@@ -223,11 +223,13 @@ test('API collect chuyển lựa chọn ghi đè thành force cho collector',asy
   } finally {await new Promise(resolve=>server.close(resolve));}
 });
 
-test('API collect không gọi nguồn khi MySQL đã có ngày và không chọn ghi đè',async()=>{
+test('API collect không gọi nguồn khi MySQL đã có ngày đủ đài và không chọn ghi đè, nhưng tự quét lại nếu thiếu đài',async()=>{
   let calls=0;
-  const existing={date:DAY,count:3,status:'complete_by_provider_count',results:[]};
-  const collector={collect:async()=>{calls++;return existing;},getLastError:()=>null};
-  const store={readDay:async()=>existing,listHistory:async()=>[DAY],listStations:async()=>[]};
+  const complete={date:DAY,count:3,status:'complete_by_provider_count',results:[]};
+  const incomplete={date:DAY,count:2,status:'needs_review',results:[]};
+  let stored=complete;
+  const collector={collect:async()=>{calls++;return complete;},getLastError:()=>null};
+  const store={readDay:async()=>stored,listHistory:async()=>[DAY],listStations:async()=>[]};
   const server=createAppServer({collector,store});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const base=`http://127.0.0.1:${server.address().port}`;
@@ -235,7 +237,20 @@ test('API collect không gọi nguồn khi MySQL đã có ngày và không chọ
     const response=await fetch(`${base}/api/collect?date=${DAY}&overwrite=false`,{method:'POST'});
     const body=await response.json();
     assert.equal(response.status,200);assert.equal(body.cached,true);assert.equal(calls,0);
+
+    stored=incomplete;
+    const retryRes=await fetch(`${base}/api/collect?date=${DAY}&overwrite=false`,{method:'POST'});
+    const retryBody=await retryRes.json();
+    assert.equal(retryRes.status,200);assert.equal(retryBody.count,3);assert.equal(calls,1);
   } finally {await new Promise(resolve=>server.close(resolve));}
+});
+
+test('extractSouthPayload chuẩn hóa mã đài tp-hcm từ nguồn chính thành ho-chi-minh',()=>{
+  const raw={date:DAY,count:1,results:{'tp-hcm':draw('tp-hcm','TP. HCM')}};
+  const southPayload=extractSouthPayload(DAY,raw);
+  assert.ok(southPayload.results['ho-chi-minh']);
+  assert.equal(southPayload.results['ho-chi-minh'].province,'ho-chi-minh');
+  assert.equal(southPayload.results['tp-hcm'],undefined);
 });
 
 test('lịch tự quét một lần, 07:30 quét bù hôm qua',async()=>{
