@@ -7,6 +7,8 @@ export const DATA_DIR = path.resolve(process.env.XSKT_DATA_DIR || path.join(root
 export const PUBLIC_DIR = path.join(root, 'public');
 export const TIMEZONE = 'Asia/Ho_Chi_Minh';
 export const API_BASE = (process.env.XSKT_API_BASE_URL || 'https://doveso.submit69.com/api').replace(/\/+$/, '');
+export const FALLBACK_API_BASE = (process.env.XSKT_FALLBACK_API_BASE_URL || 'https://api.xosovnm.net/api').replace(/\/+$/, '');
+export const BACKUP_JSON = /^(1|true|yes)$/i.test(process.env.XSKT_BACKUP_JSON || 'false');
 export const PORT = Number(process.env.PORT || 3000);
 export const HOST = process.env.HOST || '127.0.0.1';
 

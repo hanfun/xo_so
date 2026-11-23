@@ -123,9 +123,16 @@ Lịch nằm trong Node.js, **không cần tạo cron mỗi ngày**. Máy phải
 | GET | `/api/stations` |
 | GET | `/api/history` |
 | GET | `/api/day?date=2026-11-22` |
-| POST | `/api/collect?date=2026-11-22` |
+| POST | `/api/collect?date=2026-11-22&overwrite=false` |
 | GET | `/api/export.csv?date=2026-11-22` |
 | GET | `/api/stats?from=2026-10-01&to=2026-11-22&province=dong-thap&prize=giaidb` |
+| GET | `/api/prize8/distribution?date=2026-11-23&province=dong-thap&recent=40&long=25&weekday=25&parity=10` |
+
+Dashboard có mục **Quét dữ liệu theo khoảng ngày** (tối đa 10 năm/lần), hiển thị trực tiếp phần trăm, số ngày đã xử lý, số ngày/số đài đã lưu, số ngày bỏ qua và số lỗi. Trình duyệt gửi từng ngày riêng lẻ và giãn nhịp khi có gọi nguồn. Khi không chọn ghi đè, server kiểm tra MySQL trước và trả bản đã lưu mà không gọi nguồn. Khi chọn ghi đè, `overwrite=true` buộc tải lại, kiểm tra và cập nhật transaction của ngày đó. Lỗi một ngày không dừng các ngày còn lại.
+
+Khu vực **Kết quả xổ số miền Nam** đọc ngày đã chọn từ MySQL và trình bày theo bảng dò vé truyền thống: mỗi đài là một cột, mỗi giải là một hàng. Việc đổi ngày chỉ đọc `/api/day`; không gọi lại nguồn thu thập.
+
+Tên đài trong bảng là liên kết drill-down. Khi bấm, dashboard tải 50 kỳ/lần từ `/api/station-results`, hiển thị toàn bộ giải theo ngày và tự chọn đài đó trong phần thống kê. Nút **Tải thêm kết quả** phân trang lùi theo ngày mà không tải lại các kỳ đã hiển thị.
 
 Cả `province` và `prize` trong API thống kê là bộ lọc tùy chọn. Dự án chỉ lắng nghe `127.0.0.1` theo mặc định. API không có đăng nhập, **không công khai cổng 3000 lên Internet**.
 
@@ -137,7 +144,7 @@ npm test
 
 Bộ kiểm thử dùng dữ liệu giả lập, không cần MySQL thật hoặc Internet. Các chức năng kết nối MySQL thực tế và lấy API trực tiếp cần chạy kiểm tra trên máy của bạn.
 
-Nguồn XSKT: [Dò Vé Xổ Số API](https://doveso.submit69.com/api/), API JSON của bên thứ ba không yêu cầu API key. Dữ liệu chỉ để tham khảo; kết quả có giá trị chính thức phải đối chiếu với công ty XSKT phát hành. `complete_by_provider_count` chỉ xác nhận đúng định dạng và số đài thường lệ (3 đài/ngày, thứ Bảy 4 đài), không phải xác nhận chính thức.
+Nguồn chính là [Dò Vé Xổ Số API](https://doveso.submit69.com/api/). Khi nguồn chính lỗi hoặc không lưu ngày lịch sử, collector tự chuyển sang [Xổ Số VN API](https://www.xosovnm.net/nguon-api), chuẩn hóa JSON về cùng hợp đồng dữ liệu rồi mới ghi MySQL. Có thể đổi hai URL bằng `XSKT_API_BASE_URL` và `XSKT_FALLBACK_API_BASE_URL`. Khi chạy với MySQL, ứng dụng mặc định **không tạo file JSON**; chỉ bật bản sao dự phòng bằng `XSKT_BACKUP_JSON=true` nếu thực sự cần. Cả hai API đều là nguồn tổng hợp bên thứ ba; kết quả có giá trị chính thức phải đối chiếu với công ty XSKT phát hành. `complete_by_provider_count` chỉ xác nhận đúng định dạng và số đài thường lệ (3 đài/ngày, thứ Bảy 4 đài), không phải xác nhận chính thức.
 
 ## 8. Cấu trúc thư mục
 
@@ -178,13 +185,15 @@ npm run history:import -- 2025-01-01 2025-12-31
 npm run history:import -- 2026-01-01 2026-11-23
 ```
 
-Mỗi lệnh tối đa 366 ngày và chỉ nhập khi API có dữ liệu ngày tương ứng. Nếu chưa nhập lịch sử, ứng dụng **không tự tạo số dự đoán từ dữ liệu giả**.
+Mỗi lệnh tối đa 366 ngày. Collector thử nguồn chính trước rồi dùng nguồn phụ cho ngày bị thiếu; ngày cả hai nguồn đều không có sẽ được báo lỗi và không làm mất dữ liệu đã lưu. Nếu chưa nhập lịch sử, ứng dụng **không tự tạo số dự đoán từ dữ liệu giả**.
 
 **Endpoint dự đoán thử nghiệm:**
 
 ```http
 GET /api/prize8/predict?date=2026-11-24&province=dong-thap&window=52&halfLife=12&recentWeight=70&topK=10
 ```
+
+Màn hình **Tỷ trọng thống kê từng con số** hiển thị đủ `00..99` và bốn thành phần có trọng số: tần suất suy giảm gần đây, tần suất dài hạn, tần suất các kỳ cùng thứ với ngày mục tiêu, và tỷ lệ nhóm chẵn/lẻ. Mặc định là `40/25/25/10`; tổng bắt buộc bằng 100%. Bảng có thể lọc chẵn hoặc lẻ. Đây là tỷ trọng xếp hạng thống kê, không phải xác suất trúng đã hiệu chỉnh; mốc lý thuyết của mỗi số trong kỳ quay công bằng vẫn là 1%.
 
 Trong đó `province` là mã đài lấy từ `GET /api/stations`. API trả về bảng xếp hạng, số kỳ dùng để phân tích, mốc ngày huấn luyện cuối và kết quả backtest. Tham số ngày được lọc nghiêm ngặt: `draw_date < date`, không dùng kết quả của ngày cần dự đoán hoặc tương lai.
 

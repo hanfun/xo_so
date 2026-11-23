@@ -119,7 +119,77 @@ export function createMysqlStore({ pool }) {
       number: String(row.number)
     })).reverse();
   }
-  return { readDay,listHistory,listStations,writeDay,getStats,getPrize8History,close:()=>pool.end() };
+  async function getStationHistory({province,before='9999-12-31',limit=50}={}) {
+    if(typeof province!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(province))
+      throw new Error('Mã đài không hợp lệ');
+    if(!validDay(before))throw new Error('Ngày phân trang không hợp lệ');
+    if(!Number.isInteger(limit)||limit<1||limit>100)throw new Error('Giới hạn phải từ 1 đến 100 kỳ');
+    const [rows]=await pool.execute(`SELECT p.code AS province,p.name,
+      DATE_FORMAT(d.draw_date,'%Y-%m-%d') AS date,d.ticket_type,
+      r.prize_code,r.position,r.number
+      FROM (SELECT d0.id FROM draws d0 JOIN provinces p0 ON p0.id=d0.province_id
+        WHERE p0.region='MN' AND p0.code=? AND d0.draw_date < ?
+        ORDER BY d0.draw_date DESC LIMIT ?) selected
+      JOIN draws d ON d.id=selected.id JOIN provinces p ON p.id=d.province_id
+      JOIN prize_results r ON r.draw_id=d.id
+      ORDER BY d.draw_date DESC,FIELD(r.prize_code,'giaidb','giai1','giai2','giai3','giai4','giai5','giai6','giai7','giai8'),r.position`,
+      [province,before,limit]);
+    const grouped=new Map();
+    for(const row of rows) {
+      if(!grouped.has(row.date))grouped.set(row.date,{province:String(row.province),name:String(row.name),
+        date:String(row.date),ticket_type:String(row.ticket_type||''),prizes:Object.fromEntries(PRIZE_ORDER.map(x=>[x,[]]))});
+      if(Object.hasOwn(grouped.get(row.date).prizes,row.prize_code))
+        grouped.get(row.date).prizes[row.prize_code].push(String(row.number));
+    }
+    return [...grouped.values()];
+  }
+  async function savePrize8Predictions({province,targetDate,trainingCutoff,items,modelVersion,parameters}) {
+    if(!validDay(targetDate)||!validDay(trainingCutoff)||trainingCutoff>=targetDate)
+      throw new Error('Mốc huấn luyện dự đoán không hợp lệ');
+    if(!Array.isArray(items)||!items.length)throw new Error('Không có số dự đoán để lưu');
+    const conn=await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [models]=await conn.execute(`INSERT INTO model_versions
+        (model_key,version,description,parameters_json) VALUES (?,?,?,?)
+        ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),parameters_json=VALUES(parameters_json)`,
+        ['prize8-weighted-daily',modelVersion,'Xếp hạng Giải 8 tự động theo ngày',JSON.stringify(parameters)]);
+      const [provinces]=await conn.execute("SELECT id FROM provinces WHERE region='MN' AND code=? LIMIT 1",[province]);
+      if(!provinces.length)throw new Error(`Chưa có dữ liệu đài ${province}`);
+      for(const [index,item] of items.entries()) {
+        await conn.execute(`INSERT IGNORE INTO predictions
+          (model_version_id,province_id,target_date,prediction_type,predicted_value,confidence,training_cutoff,metadata_json)
+          VALUES (?,?,?,?,?,NULL,?,?)`,[models.insertId,provinces[0].id,targetDate,'prize8_top10',item.number,
+          trainingCutoff,JSON.stringify({rank:index+1,score:item.score,observed:item.observed,lastSeen:item.lastSeen})]);
+      }
+      await conn.commit();
+    } catch(e) {try{await conn.rollback();}catch{}throw e;}
+    finally{conn.release();}
+  }
+  async function getDailyPredictions(targetDate) {
+    if(!validDay(targetDate))throw new Error('Ngày dự đoán không hợp lệ');
+    const [rows]=await pool.execute(`SELECT p.code AS province,p.name,pred.predicted_value,
+      pred.training_cutoff,pred.generated_at,pred.metadata_json,actual.number AS actual
+      FROM predictions pred JOIN provinces p ON p.id=pred.province_id
+      LEFT JOIN draws d ON d.province_id=p.id AND d.draw_date=pred.target_date
+      LEFT JOIN prize_results actual ON actual.draw_id=d.id AND actual.prize_code='giai8' AND actual.position=1
+      WHERE p.region='MN' AND pred.target_date=? AND pred.prediction_type='prize8_top10'
+      ORDER BY p.name,CAST(JSON_UNQUOTE(JSON_EXTRACT(pred.metadata_json,'$.rank')) AS UNSIGNED)`,[targetDate]);
+    const grouped=new Map();
+    for(const row of rows) {
+      const metadata=typeof row.metadata_json==='string'?JSON.parse(row.metadata_json):row.metadata_json;
+      if(!grouped.has(row.province))grouped.set(row.province,{province:String(row.province),name:String(row.name),
+        targetDate,trainingCutoff:String(row.training_cutoff),generatedAt:new Date(row.generated_at).toISOString(),
+        actual:row.actual==null?null:String(row.actual),top:[]});
+      grouped.get(row.province).top.push({number:String(row.predicted_value),rank:Number(metadata.rank),score:Number(metadata.score)});
+    }
+    return [...grouped.values()].map(group=>({...group,
+      actualRank:group.actual?group.top.find(x=>x.number===group.actual)?.rank||null:null,
+      top1Hit:group.actual?group.top[0]?.number===group.actual:null,
+      top10Hit:group.actual?group.top.some(x=>x.number===group.actual):null}));
+  }
+  return { readDay,listHistory,listStations,writeDay,getStats,getPrize8History,getStationHistory,
+    savePrize8Predictions,getDailyPredictions,close:()=>pool.end() };
 }
 function sqlTime(value) {
   const date=new Date(value);

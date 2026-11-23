@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { validateDraw, extractSouthPayload, normalizePayload, fetchDay } from '../src/lottery.js';
+import { validateDraw, extractSouthPayload, normalizePayload, fetchDay, adaptXosovnmPayload } from '../src/lottery.js';
 import { createMysqlStore } from '../src/mysql-store.js';
 import { createCollector } from '../src/collector.js';
 import { createAppServer } from '../src/server.js';
@@ -147,6 +147,22 @@ test('MySQL thống kê SQL chỉ miền Nam và có tham số lọc đài, gi�
   await assert.rejects(()=>db.getStats({from:DAY,to:DAY,province:"x' OR 1=1 --"}),/Mã đài/);
 });
 
+test('MySQL lịch sử một đài nhóm đầy đủ các giải theo ngày và phân trang',async()=>{
+  const calls=[];
+  const pool={execute:async(sql,params)=>{calls.push([sql,params]);return [[
+    {province:'dong-thap',name:'Đồng Tháp',date:'2026-11-23',ticket_type:'K1',prize_code:'giaidb',position:1,number:'001234'},
+    {province:'dong-thap',name:'Đồng Tháp',date:'2026-11-23',ticket_type:'K1',prize_code:'giai8',position:1,number:'07'}
+  ]];},end:async()=>{}};
+  const db=createMysqlStore({pool});
+  const results=await db.getStationHistory({province:'dong-thap',before:'2026-11-24',limit:50});
+  assert.equal(results.length,1);
+  assert.equal(results[0].prizes.giaidb[0],'001234');
+  assert.equal(results[0].prizes.giai8[0],'07');
+  assert.deepEqual(calls[0][1],['dong-thap','2026-11-24',50]);
+  assert.match(calls[0][0],/p0\.region='MN'/);
+  await assert.rejects(()=>db.getStationHistory({province:"x' OR 1=1"}),/Mã đài/);
+});
+
 test('API local trả kết quả miền Nam, thống kê, danh sách đài và CSV',async()=>{
   const report=normalizePayload(DAY,south(),'https://example.test/source');
   const store={
@@ -176,6 +192,35 @@ test('API local trả kết quả miền Nam, thống kê, danh sách đài và 
   }finally{await new Promise(resolve=>server.close(resolve));}
 });
 
+test('API collect chuyển lựa chọn ghi đè thành force cho collector',async()=>{
+  const calls=[];
+  const collector={collect:async(day,options)=>{calls.push([day,options]);return {date:day,count:0,results:[]};},getLastError:()=>null};
+  const store={readDay:async()=>null,listHistory:async()=>[],listStations:async()=>[]};
+  const server=createAppServer({collector,store});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  try {
+    assert.equal((await fetch(`${base}/api/collect?date=${DAY}&overwrite=false`,{method:'POST'})).status,200);
+    assert.equal((await fetch(`${base}/api/collect?date=${DAY}&overwrite=true`,{method:'POST'})).status,200);
+    assert.deepEqual(calls,[[DAY,{force:false}],[DAY,{force:true}]]);
+  } finally {await new Promise(resolve=>server.close(resolve));}
+});
+
+test('API collect không gọi nguồn khi MySQL đã có ngày và không chọn ghi đè',async()=>{
+  let calls=0;
+  const existing={date:DAY,count:3,status:'complete_by_provider_count',results:[]};
+  const collector={collect:async()=>{calls++;return existing;},getLastError:()=>null};
+  const store={readDay:async()=>existing,listHistory:async()=>[DAY],listStations:async()=>[]};
+  const server=createAppServer({collector,store});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  try {
+    const response=await fetch(`${base}/api/collect?date=${DAY}&overwrite=false`,{method:'POST'});
+    const body=await response.json();
+    assert.equal(response.status,200);assert.equal(body.cached,true);assert.equal(calls,0);
+  } finally {await new Promise(resolve=>server.close(resolve));}
+});
+
 test('lịch tự quét một lần, 07:30 quét bù hôm qua',async()=>{
   const runs=[];
   const scheduler=createScheduler({
@@ -194,6 +239,44 @@ test('fetchDay hỗ trợ mock HTTP không cần mạng thật',async()=>{
   });
   const result=await fetchDay(DAY,{fetchImpl:fake,baseUrl:'https://example.test/api'});
   assert.equal(result.payload.date,DAY);
+});
+
+test('nguồn phụ Xổ Số VN được chuẩn hóa theo từng đài và giữ số 0 đầu',()=>{
+  const body={data:[{date:'23/11/2026',data:{
+    city:['TP HCM','Đồng Tháp','Cà Mau'],
+    db:['000001','000002','000003'],g1:['00001','00002','00003'],
+    g2:['10001','10002','10003'],
+    g3:['20001','20002','20003','20004','20005','20006'],
+    g4:Array.from({length:21},(_,i)=>String(30000+i)),
+    g5:['0001','0002','0003'],
+    g6:['0011','0012','0013','0021','0022','0023','0031','0032','0033'],
+    g7:['001','002','003'],g8:['01','02','03']
+  }}]};
+  const payload=adaptXosovnmPayload(DAY,body);
+  assert.deepEqual(Object.keys(payload.results),['ho-chi-minh','dong-thap','ca-mau']);
+  assert.equal(payload.results['ho-chi-minh'].prizes.giaidb[0],'000001');
+  assert.deepEqual(payload.results['dong-thap'].prizes.giai3,['20003','20004']);
+  assert.equal(payload.results['ca-mau'].prizes.giai8[0],'03');
+  assert.equal(validateDraw('dong-thap',payload.results['dong-thap'],DAY).error,undefined);
+});
+
+test('fetchDay dùng nguồn phụ khi nguồn chính trả 404',async()=>{
+  const calls=[];
+  const fallback={data:[{date:'23/11/2026',data:{
+    city:['Đồng Tháp'],db:['000001'],g1:['00001'],g2:['10001'],
+    g3:['20001','20002'],g4:['30001','30002','30003','30004','30005','30006','30007'],
+    g5:['0001'],g6:['0011','0012','0013'],g7:['001'],g8:['01']
+  }}]};
+  const fake=async url=>{
+    calls.push(String(url));
+    if(String(url).startsWith('https://primary.test')) return new Response('',{status:404});
+    return new Response(JSON.stringify(fallback),{status:200,headers:{'content-type':'application/json'}});
+  };
+  const result=await fetchDay(DAY,{fetchImpl:fake,baseUrl:'https://primary.test/api',
+    fallbackBaseUrl:'https://fallback.test/api',retries:1});
+  assert.equal(calls.length,2);
+  assert.match(result.sourceUrl,/fallback\.test/);
+  assert.equal(result.payload.results['dong-thap'].prizes.giai8[0],'01');
 });
 
 test('CSV giữ dạng text để Excel không làm mất số 0 đầu',()=>{

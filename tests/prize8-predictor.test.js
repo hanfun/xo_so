@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rankPrize8, backtestPrize8, normalizeHistory, validateParameters } from '../src/prize8-predictor.js';
+import { rankPrize8, backtestPrize8, normalizeHistory, validateParameters, analyzePrize8Distribution } from '../src/prize8-predictor.js';
 import { createMysqlStore } from '../src/mysql-store.js';
 import { createAppServer } from '../src/server.js';
 
@@ -23,6 +23,19 @@ test('weighted forecast ranks frequent recent prize-8 values and preserves leadi
   assert.equal(result.status,'experimental');
   const zero=rankPrize8(history(60,'2023-01-01',()=>7),'2026-12-01',{window:52});
   assert.equal(zero.top[0].number,'07');
+});
+
+test('distribution scores all 00-99 with weekday/parity components and normalized weights',()=>{
+  const rows=history(80,'2024-01-01',i=>(i*2)%100);
+  const result=analyzePrize8Distribution(rows,'2026-01-05',{window:52,recent:40,long:25,weekday:25,parity:10});
+  assert.equal(result.status,'experimental');
+  assert.equal(result.items.length,100);
+  assert.equal(result.weekdaySample,52);
+  assert.ok(result.items.find(x=>x.number==='00').components.parity>
+    result.items.find(x=>x.number==='01').components.parity);
+  const total=result.items.reduce((sum,item)=>sum+item.scorePercent,0);
+  assert.ok(Math.abs(total-100)<0.001);
+  assert.throws(()=>analyzePrize8Distribution(rows,'2026-01-05',{recent:40,long:40,weekday:40,parity:10}),/100%/);
 });
 
 test('no data leakage: future draws and target draw do not alter forecast for target date',()=>{

@@ -32,8 +32,9 @@ For a fair lottery with independent draws, recent outcomes do not provide eviden
 ## 2. Architecture and source of truth
 
 ```text
-Third-party XSMN JSON API
-  -> src/lottery.js         # validate results; extract MN only
+Primary third-party XSMN JSON API
+  -> fallback Xổ Số VN API when the primary source fails/misses a date
+  -> src/lottery.js         # adapt fallback JSON; validate results; extract MN only
   -> src/collector.js       # collect, throttle, preserve valid prior results
   -> src/mysql-store.js     # MySQL transaction; normalized draws/prizes
   -> local MySQL database   # authoritative result history
@@ -45,14 +46,14 @@ Third-party XSMN JSON API
        |                              GET /api/prize8/predict
        |                                -> public/app.js / index.html
        -> other statistics via /api/stats
-  -> data/YYYY-MM-DD.json   # optional local backup, ignored by Git
+  -> data/YYYY-MM-DD.json   # opt-in with XSKT_BACKUP_JSON=true; ignored by Git
 ```
 
 Relevant source files:
 
 | File | Responsibility |
 |---|---|
-| `src/lottery.js` | Restricts to `region === 'MN'`; validates individual prize counts and digit lengths. |
+| `src/lottery.js` | Tries the primary API then Xổ Số VN fallback; adapts fallback arrays by station, restricts to `region === 'MN'`, and validates prize counts/digit lengths. |
 | `src/collector.js` | Collects a draw date, writes MySQL and optional JSON backup. |
 | `src/mysql-store.js` | Stores normalized draw/prize rows; queries prize-8 history before the target date. |
 | `src/prize8-predictor.js` | Pure ranking algorithm, parameter validation, normalization, walk-forward backtest. |
@@ -232,6 +233,10 @@ GET /api/prize8/predict?date=2026-11-24&province=dong-thap&window=52&halfLife=12
 - The endpoint currently computes in-memory on each request; it **does not write** to the `predictions` table.
 
 Frontend controls in `public/index.html` / `public/app.js` allow station, target date, training window, half-life and recency share. Display outputs include Top 10 with relative weighted scores and the backtest benchmarks. Frontend should continue to label these as **experimental ranking**, not odds or a guaranteed winning recommendation.
+
+An additional implemented experimental endpoint, `GET /api/prize8/distribution`, returns all `00..99` for one station and target date. It combines four normalized components whose percentage weights must sum to 100: decayed recent frequency, trailing-window frequency, frequency among observations on the same weekday as the target, and the observed even/odd group share distributed uniformly across the 50 values in that group. Defaults are `40/25/25/10`. It strictly uses rows before the target date and requires 20 observations. The result is a statistical allocation score, not a calibrated winning probability; the UI must retain the fair-draw 1% reference disclaimer.
+
+Historical collection is also available in the dashboard for ranges of at most 10 years. The browser submits one day at a time to `POST /api/collect?date=YYYY-MM-DD&overwrite=false|true` so it can show progress and continue past per-day errors. With `overwrite=false`, the server reads MySQL first and returns the existing snapshot with `cached=true` without contacting a provider. With `overwrite=true`, it forces a validated re-fetch and transactional update.
 
 ## 7. Run, verify, and debug
 

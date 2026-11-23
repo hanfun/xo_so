@@ -1,6 +1,6 @@
 import { fetchDay, normalizePayload, extractSouthPayload } from './lottery.js';
 import { readDay as readJsonDay, writeDay as writeJsonDay } from './store.js';
-import { validDay } from './config.js';
+import { BACKUP_JSON, validDay } from './config.js';
 
 function fileStore(dataDir) {
   return {
@@ -10,7 +10,7 @@ function fileStore(dataDir) {
 }
 export function createCollector({
   store = null, dataDir, fetcher = fetchDay, minIntervalMs = 5 * 60_000,
-  backupJson = Boolean(store)
+  backupJson = Boolean(store) && BACKUP_JSON
 } = {}) {
   const db = store || fileStore(dataDir);
   const inFlight = new Map();

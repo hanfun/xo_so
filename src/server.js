@@ -5,7 +5,8 @@ import { DATA_DIR, PUBLIC_DIR, validDay, vnClock } from './config.js';
 import { exportCsv, listHistory as fileHistory, readDay as fileRead } from './store.js';
 import { PRIZE_NAMES } from './lottery.js';
 import { SLOTS } from './scheduler.js';
-import { rankPrize8, backtestPrize8, validateParameters } from './prize8-predictor.js';
+import { rankPrize8, backtestPrize8, validateParameters, analyzePrize8Distribution } from './prize8-predictor.js';
+import { stationsForDate, XSMN_SCHEDULE_VERSION } from './station-schedule.js';
 
 const STATIC={
   '/':['index.html','text/html; charset=utf-8'],
@@ -45,6 +46,42 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
         return json(res,200,{dates:await db.listHistory()});
       if(url.pathname==='/api/stations' && req.method==='GET')
         return json(res,200,{stations:await db.listStations()});
+      if(url.pathname==='/api/prize8/daily' && req.method==='POST') {
+        const targetDate=url.searchParams.get('date')||vnClock().day;
+        if(!validDay(targetDate)||targetDate>vnClock().day)return json(res,400,{error:'Ngày dự đoán không hợp lệ'});
+        if(typeof db.getDailyPredictions!=='function'||typeof db.savePrize8Predictions!=='function')
+          return json(res,503,{error:'Cần MySQL để lưu dự đoán hằng ngày'});
+        try {
+          const scheduled=stationsForDate(targetDate),existing=await db.getDailyPredictions(targetDate);
+          const completed=new Set(existing.map(x=>x.province));
+          const available=new Set((await db.listStations()).map(x=>x.code));
+          const generated=[],skipped=[];
+          for(const province of scheduled) {
+            if(completed.has(province)){skipped.push({province,reason:'already_exists'});continue;}
+            if(!available.has(province)){skipped.push({province,reason:'no_history'});continue;}
+            const history=await db.getPrize8History({province,before:targetDate,limit:500});
+            const forecast=rankPrize8(history,targetDate,{window:52,halfLife:12,recentWeight:.7,alpha:.5,topK:10,backtestDraws:80});
+            if(forecast.status!=='experimental'||!forecast.trainingEnd) {
+              skipped.push({province,reason:'insufficient_history'});continue;
+            }
+            await db.savePrize8Predictions({province,targetDate,trainingCutoff:forecast.trainingEnd,items:forecast.top,
+              modelVersion:`v1-daily-${XSMN_SCHEDULE_VERSION}`,parameters:forecast.params});
+            generated.push(province);
+          }
+          return json(res,200,{targetDate,scheduled,generated,skipped,predictions:await db.getDailyPredictions(targetDate),
+            note:'Dự đoán đã lưu không được tạo lại hoặc sửa sau khi có kết quả.'});
+        } catch(e) {return json(res,500,{error:e.message});}
+      }
+      if(url.pathname==='/api/station-results' && req.method==='GET') {
+        if(typeof db.getStationHistory!=='function')return json(res,503,{error:'Cần MySQL để đọc lịch sử đài'});
+        const province=url.searchParams.get('province')||'';
+        const before=url.searchParams.get('before')||'9999-12-31';
+        const limit=Number(url.searchParams.get('limit')||50);
+        try {
+          const results=await db.getStationHistory({province,before,limit});
+          return json(res,200,{province,name:results[0]?.name||province,results,hasMore:results.length===limit});
+        } catch(e) {return json(res,400,{error:e.message});}
+      }
       if(url.pathname==='/api/prize8/predict' && req.method==='GET') {
         const targetDate = url.searchParams.get('date') || vnClock().day;
         const province = url.searchParams.get('province') || '';
@@ -74,6 +111,22 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
           notes:'Chỉ dùng lịch sử giải 8 của đài đã chọn trước ngày dự đoán. Đây là xếp hạng thử nghiệm, không phải xác suất trúng.'
         });
       }
+      if(url.pathname==='/api/prize8/distribution' && req.method==='GET') {
+        const targetDate=url.searchParams.get('date')||vnClock().day;
+        const province=url.searchParams.get('province')||'';
+        if(!validDay(targetDate)||!/^[a-zA-Z0-9_-]{1,100}$/.test(province))
+          return json(res,400,{error:'Ngày hoặc đài không hợp lệ'});
+        if(typeof db.getPrize8History!=='function')return json(res,503,{error:'Cần MySQL để phân tích giải 8'});
+        try {
+          const history=await db.getPrize8History({province,before:targetDate,limit:500});
+          const distribution=analyzePrize8Distribution(history,targetDate,{
+            window:Number(url.searchParams.get('window')??104),halfLife:Number(url.searchParams.get('halfLife')??12),
+            recent:Number(url.searchParams.get('recent')??40),long:Number(url.searchParams.get('long')??25),
+            weekday:Number(url.searchParams.get('weekday')??25),parity:Number(url.searchParams.get('parity')??10)
+          });
+          return json(res,200,{province,name:history.at(-1)?.name||province,distribution});
+        } catch(e) {return json(res,400,{error:e.message});}
+      }
       if(url.pathname==='/api/stats' && req.method==='GET') {
         const from=url.searchParams.get('from');
         const to=url.searchParams.get('to');
@@ -98,7 +151,14 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
           });
         }
         if(url.pathname==='/api/collect' && req.method==='POST') {
-          try {return json(res,200,await collector.collect(day));}
+          const overwrite=url.searchParams.get('overwrite')==='true';
+          try {
+            if(!overwrite) {
+              const existing=await db.readDay(day);
+              if(existing)return json(res,200,{...existing,cached:true});
+            }
+            return json(res,200,await collector.collect(day,{force:overwrite}));
+          }
           catch(e){return json(res,503,{error:e.message});}
         }
         if(url.pathname==='/api/export.csv' && req.method==='GET') {

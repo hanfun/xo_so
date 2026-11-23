@@ -38,6 +38,31 @@
         </div>
       </section>
       <div class="notice" id="notice" role="status" aria-live="polite">Đang tải...</div>
+
+      <section class="history-import" aria-labelledby="historyImportTitle">
+        <div class="section-top"><div>
+          <div class="eyebrow">NHẬP LỊCH SỬ / MYSQL</div>
+          <h2 id="historyImportTitle">Quét dữ liệu theo khoảng ngày</h2>
+          <p>Ngày đã tồn tại sẽ được bỏ qua, trừ khi chọn ghi đè.</p>
+        </div></div>
+        <div class="history-controls">
+          <label>Từ ngày<input type="date" id="scanFromDate"></label>
+          <label>Đến ngày<input type="date" id="scanToDate"></label>
+          <label class="overwrite-option"><input type="checkbox" id="scanOverwrite">
+            <span><strong>Ghi đè dữ liệu đã có</strong><small>Tải lại nguồn và cập nhật MySQL</small></span>
+          </label>
+          <button type="button" class="btn primary" id="scanRangeBtn">Quét khoảng ngày</button>
+        </div>
+        <div class="range-status">
+          <strong id="scanPercent">0%</strong>
+          <div class="range-progress" id="scanRangeProgress" role="status" aria-live="polite">
+            Chọn khoảng ngày cần quét (tối đa 10 năm).
+          </div>
+        </div>
+        <div class="progress-track" id="scanProgressTrack" role="progressbar" aria-label="Tiến trình quét dữ liệu"
+          aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="scanProgressBar"></div></div>
+      </section>
+
       <section class="summary" aria-label="Thống kê ngày đã chọn">
         <div class="stat"><div class="stat-head"><span class="badge-region south">ĐÀI MIỀN NAM</span><span>01</span></div>
           <strong id="countMN">—</strong><div class="stat-label">Đài có kết quả</div></div>
@@ -49,10 +74,26 @@
 
       <section class="results-section" aria-labelledby="resultsTitle">
         <div class="section-top"><div>
-          <h2 id="resultsTitle">Kết quả theo đài</h2>
-          <p id="meta">Các đài xổ số miền Nam trong ngày</p>
+          <div class="eyebrow">SỔ KẾT QUẢ / DỮ LIỆU MYSQL</div>
+          <h2 id="resultsTitle">Kết quả xổ số miền Nam</h2>
+          <p id="meta">Bảng kết quả truyền thống theo ngày và đài</p>
         </div></div>
         <div id="results" class="result-grid" aria-live="polite"></div>
+      </section>
+
+      <section class="station-history" id="stationHistory" aria-labelledby="stationHistoryTitle" hidden>
+        <div class="section-top"><div>
+          <div class="eyebrow">LỊCH SỬ THEO ĐÀI / MYSQL</div>
+          <h2 id="stationHistoryTitle">Kết quả theo đài</h2>
+          <p id="stationHistoryMeta">Chọn một đài trong bảng kết quả phía trên.</p>
+        </div></div>
+        <div class="panel table-scroll">
+          <table class="station-history-table">
+            <thead><tr><th>Ngày</th><th>G.8</th><th>G.7</th><th>G.6</th><th>G.5</th><th>G.4</th><th>G.3</th><th>G.2</th><th>G.1</th><th>ĐB</th></tr></thead>
+            <tbody id="stationHistoryRows"></tbody>
+          </table>
+        </div>
+        <button type="button" class="btn secondary history-more" id="stationHistoryMore" hidden>Tải thêm kết quả</button>
       </section>
 
       <section class="analytics" id="analytics" aria-labelledby="analysisTitle">
@@ -109,6 +150,14 @@
       </section>
 
       <section class="prediction-section" aria-labelledby="predictionTitle">
+        <div class="daily-predictions" aria-labelledby="dailyPredictionTitle">
+          <div class="section-top"><div>
+            <div class="eyebrow">TỰ ĐỘNG / CÁC ĐÀI HÔM NAY</div>
+            <h2 id="dailyPredictionTitle">Dự đoán Giải 8 đã lưu</h2>
+            <p id="dailyPredictionMessage">Đang kiểm tra dự đoán trong MySQL...</p>
+          </div></div>
+          <div id="dailyPredictionCards" class="daily-prediction-grid"></div>
+        </div>
         <div class="section-top">
           <div>
             <div class="eyebrow">THỬ NGHIỆM / GIẢI 8</div>
@@ -158,6 +207,33 @@
         </p>
       </section>
 
+      <section class="distribution-section" aria-labelledby="distributionTitle">
+        <div class="section-top"><div>
+          <div class="eyebrow">PHÂN BỐ 00–99 / GIẢI 8</div>
+          <h2 id="distributionTitle">Tỷ trọng thống kê từng con số</h2>
+          <p>Theo đài, ngày mục tiêu, cùng thứ, chẵn/lẻ và tần suất lịch sử.</p>
+        </div></div>
+        <div class="distribution-controls">
+          <label>Ngày mục tiêu<input type="date" id="distributionDate"></label>
+          <label>Đài XSMN<select id="distributionStation"><option value="">Chọn đài</option></select></label>
+          <label>Cửa sổ<select id="distributionWindow"><option value="52">52 kỳ</option><option value="104" selected>104 kỳ</option><option value="156">156 kỳ</option><option value="200">200 kỳ</option></select></label>
+          <label>Lọc chẵn/lẻ<select id="distributionParity"><option value="">Tất cả</option><option value="chẵn">Số chẵn</option><option value="lẻ">Số lẻ</option></select></label>
+          <label>Gần đây (%)<input type="number" id="weightRecent" min="0" max="100" value="40"></label>
+          <label>Dài hạn (%)<input type="number" id="weightLong" min="0" max="100" value="25"></label>
+          <label>Cùng thứ (%)<input type="number" id="weightWeekday" min="0" max="100" value="25"></label>
+          <label>Chẵn/lẻ (%)<input type="number" id="weightParity" min="0" max="100" value="10"></label>
+          <button type="button" class="btn primary" id="distributionBtn">Phân tích 00–99</button>
+        </div>
+        <div class="analysis-note" id="distributionMessage">Tổng bốn trọng số phải bằng 100%.</div>
+        <div class="panel distribution-panel">
+          <div class="table-scroll"><table class="distribution-table">
+            <thead><tr><th>Hạng</th><th>Số</th><th>Chẵn/lẻ</th><th>Tỷ trọng</th><th>Gần đây</th><th>Dài hạn</th><th>Cùng thứ</th><th>Chẵn/lẻ</th><th>Số lần</th><th>Cùng thứ</th></tr></thead>
+            <tbody id="distributionRows"><tr><td colspan="10">Chưa có dữ liệu phân tích.</td></tr></tbody>
+          </table></div>
+        </div>
+        <p class="analysis-disclaimer">Các tỷ trọng cộng lại xấp xỉ 100% trước làm tròn nhưng không phải xác suất trúng đã hiệu chỉnh. Nếu kỳ quay độc lập và công bằng, mỗi số 00–99 có xác suất lý thuyết 1%.</p>
+      </section>
+
       <section class="help-row"><div class="mini-icon">◷</div><div>
         <strong>Tự quét XSMN khi Node.js đang chạy</strong>
         <p>17:00, 18:00, 19:00 và quét bù 07:30 sáng hôm sau (giờ Việt Nam). Dữ liệu chính lưu MySQL local; JSON là bản sao dự phòng.</p>
@@ -165,7 +241,7 @@
     </main>
     <footer>
       <span>© XSMN Local · Chỉ thống kê, không đảm bảo dự đoán.</span>
-      <span>Nguồn: <a href="https://doveso.submit69.com/api/" target="_blank" rel="noopener noreferrer">Dò Vé Xổ Số API</a> — cần đối chiếu công bố chính thức.</span>
+      <span>Nguồn tổng hợp bên thứ ba — cần đối chiếu công bố chính thức.</span>
     </footer>
   </div>
 </body>

@@ -99,6 +99,47 @@ export function rankPrize8(history, targetDate, options = {}) {
   };
 }
 
+export function analyzePrize8Distribution(history,targetDate,options={}) {
+  if(typeof targetDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(targetDate))
+    throw new Error('Ngày phân tích không hợp lệ');
+  const window=Number(options.window??104),halfLife=Number(options.halfLife??12),alpha=0.5;
+  if(!Number.isInteger(window)||window<20||window>200)throw new Error('window phải nằm trong khoảng 20–200 kỳ');
+  if(!Number.isFinite(halfLife)||halfLife<2||halfLife>100)throw new Error('halfLife phải nằm trong khoảng 2–100 kỳ');
+  const weights={recent:Number(options.recent??40),long:Number(options.long??25),weekday:Number(options.weekday??25),parity:Number(options.parity??10)};
+  if(Object.values(weights).some(x=>!Number.isFinite(x)||x<0||x>100))throw new Error('Mỗi trọng số phải từ 0 đến 100');
+  const weightSum=Object.values(weights).reduce((a,b)=>a+b,0);
+  if(Math.abs(weightSum-100)>1e-9)throw new Error('Tổng bốn trọng số phải bằng 100%');
+  const all=normalizeHistory(history).filter(row=>row.date<targetDate);
+  const rows=all.slice(-window),targetWeekday=new Date(`${targetDate}T12:00:00Z`).getUTCDay();
+  const weekdayRows=rows.filter(row=>new Date(`${row.date}T12:00:00Z`).getUTCDay()===targetWeekday);
+  if(rows.length<MIN_HISTORY)return {status:'insufficient_history',targetDate,historyCount:all.length,windowUsed:rows.length,items:[]};
+  const raw=new Array(100).fill(0),decayed=new Array(100).fill(0),weekdayCounts=new Array(100).fill(0);
+  const parityCounts=[0,0];let decaySum=0;
+  for(let age=0;age<rows.length;age++) {
+    const number=Number(rows[rows.length-1-age].number),weight=Math.pow(0.5,age/halfLife);
+    raw[number]++;decayed[number]+=weight;decaySum+=weight;parityCounts[number%2]++;
+  }
+  weekdayRows.forEach(row=>weekdayCounts[Number(row.number)]++);
+  const longDen=rows.length+100*alpha,recentDen=decaySum+100*alpha,weekdayDen=weekdayRows.length+100*alpha;
+  const parityDen=rows.length+2;
+  const items=Array.from({length:100},(_,number)=>{
+    const components={
+      recent:(decayed[number]+alpha)/recentDen,
+      long:(raw[number]+alpha)/longDen,
+      weekday:(weekdayCounts[number]+alpha)/weekdayDen,
+      parity:((parityCounts[number%2]+1)/parityDen)/50
+    };
+    const mix=(weights.recent*components.recent+weights.long*components.long+
+      weights.weekday*components.weekday+weights.parity*components.parity)/100;
+    return {number:String(number).padStart(2,'0'),parity:number%2?'lẻ':'chẵn',
+      scorePercent:Number((100*mix).toFixed(5)),observed:raw[number],weekdayObserved:weekdayCounts[number],
+      components:Object.fromEntries(Object.entries(components).map(([key,value])=>[key,Number((100*value).toFixed(5))]))};
+  }).sort((a,b)=>b.scorePercent-a.scorePercent||a.number.localeCompare(b.number));
+  return {status:'experimental',targetDate,targetWeekday,historyCount:all.length,windowUsed:rows.length,
+    weekdaySample:weekdayRows.length,weights,params:{window,halfLife,alpha},items,
+    disclaimer:'Tỷ trọng thống kê thử nghiệm, không phải xác suất trúng đã hiệu chỉnh. Mốc lý thuyết công bằng của mỗi số là 1%.'};
+}
+
 /**
  * Strict forward-chain backtest. Each prediction is trained only on observations
  * strictly earlier than the date being evaluated, with no look-ahead.

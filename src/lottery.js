@@ -1,4 +1,4 @@
-import { API_BASE, TIMEZONE, validDay } from './config.js';
+import { API_BASE, FALLBACK_API_BASE, TIMEZONE, validDay } from './config.js';
 
 export const REGIONS = ['MN'];
 export const PRIZE_NAMES = {
@@ -41,8 +41,19 @@ export function extractSouthPayload(day, payload) {
   return { date: day, count: entries.length, results: Object.fromEntries(entries) };
 }
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-export async function fetchDay(day, { baseUrl = API_BASE, fetchImpl = fetch, retries = 2 } = {}) {
-  if (!validDay(day)) throw new Error('Ngày phải có định dạng YYYY-MM-DD');
+async function readJson(response) {
+  const max = 2_000_000;
+  if (Number(response.headers.get('content-length')) > max) throw new Error('API trả về dữ liệu quá lớn');
+  let size=0; const chunks=[];
+  if (!response.body) throw new Error('API trả về nội dung rỗng');
+  for await (const chunk of response.body) {
+    size+=chunk.length;
+    if (size>max) throw new Error('API trả về dữ liệu quá lớn');
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/,''));
+}
+async function fetchPrimary(day,{baseUrl,fetchImpl,retries}) {
   const url = `${baseUrl.replace(/\/+$/, '')}/${day}.json`;
   let lastError;
   for (let attempt=0; attempt<retries; attempt++) {
@@ -52,16 +63,7 @@ export async function fetchDay(day, { baseUrl = API_BASE, fetchImpl = fetch, ret
         signal: AbortSignal.timeout(15000), cache:'no-store'
       });
       if (!response.ok) throw new Error(`HTTP ${response.status} (${day})`);
-      const max = 2_000_000;
-      if (Number(response.headers.get('content-length')) > max) throw new Error('API trả về dữ liệu quá lớn');
-      let size=0; const chunks=[];
-      if (!response.body) throw new Error('API trả về nội dung rỗng');
-      for await (const chunk of response.body) {
-        size+=chunk.length;
-        if (size>max) throw new Error('API trả về dữ liệu quá lớn');
-        chunks.push(chunk);
-      }
-      const payload = JSON.parse(Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/,''));
+      const payload = await readJson(response);
       if (!payload || typeof payload!=='object' || Array.isArray(payload) || payload.date !== day
         || !payload.results || typeof payload.results!=='object' || Array.isArray(payload.results)) {
         throw new Error('Ngày hoặc danh sách kết quả của API không hợp lệ');
@@ -72,7 +74,58 @@ export async function fetchDay(day, { baseUrl = API_BASE, fetchImpl = fetch, ret
       if (attempt+1 < retries) await sleep(800*(attempt+1));
     }
   }
-  throw new Error(`Không lấy được dữ liệu: ${lastError.message}`);
+  throw lastError;
+}
+function stationCode(name) {
+  const normalized=String(name).trim().toLowerCase().replace(/đ/g,'d')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  if(['tp-hcm','tp-ho-chi-minh','ho-chi-minh'].includes(normalized)) return 'ho-chi-minh';
+  return normalized;
+}
+export function adaptXosovnmPayload(day,body) {
+  const displayDate=day.split('-').reverse().join('/');
+  const row=body?.data?.find?.(item=>item?.date===displayDate);
+  const cities=row?.data?.city;
+  if(!Array.isArray(cities) || !cities.length) throw new Error(`Nguồn phụ không có kết quả XSMN ngày ${day}`);
+  const fields={giaidb:['db',1],giai1:['g1',1],giai2:['g2',1],giai3:['g3',2],
+    giai4:['g4',7],giai5:['g5',1],giai6:['g6',3],giai7:['g7',1],giai8:['g8',1]};
+  const results={};
+  cities.forEach((name,index)=>{
+    const prizes={};
+    for(const [tier,[field,count]] of Object.entries(fields)) {
+      const values=row.data[field];
+      if(!Array.isArray(values) || values.length!==cities.length*count)
+        throw new Error(`Nguồn phụ thiếu hoặc sai cấu trúc ${field}`);
+      prizes[tier]=values.slice(index*count,(index+1)*count).map(String);
+    }
+    const code=stationCode(name);
+    results[code]={date:day,region:'MN',province:code,name:String(name).trim(),ticket_type:'',prizes};
+  });
+  return {date:day,count:cities.length,results};
+}
+async function fetchFallback(day,{baseUrl,fetchImpl}) {
+  const date=day.split('-').reverse().join('/');
+  const query=new URLSearchParams({date,limit:'10'});
+  const url=`${baseUrl.replace(/\/+$/, '')}/lottery/region/mien-nam?${query}`;
+  const response=await fetchImpl(url,{
+    headers:{Accept:'application/json','User-Agent':'XSKT-Node-Local/1.1'},
+    signal:AbortSignal.timeout(15000),cache:'no-store'
+  });
+  if(!response.ok) throw new Error(`HTTP ${response.status} (${day})`);
+  return {payload:adaptXosovnmPayload(day,await readJson(response)),sourceUrl:url};
+}
+export async function fetchDay(day, {
+  baseUrl = API_BASE, fallbackBaseUrl = FALLBACK_API_BASE, fetchImpl = fetch, retries = 2
+} = {}) {
+  if (!validDay(day)) throw new Error('Ngày phải có định dạng YYYY-MM-DD');
+  let primaryError;
+  try { return await fetchPrimary(day,{baseUrl,fetchImpl,retries}); }
+  catch(error) { primaryError=error; }
+  try { return await fetchFallback(day,{baseUrl:fallbackBaseUrl,fetchImpl}); }
+  catch(error) {
+    throw new Error(`Không lấy được dữ liệu: nguồn chính: ${primaryError.message}; nguồn phụ: ${error.message}`);
+  }
 }
 export function normalizePayload(day, southPayload, sourceUrl, previous = null) {
   if (!validDay(day) || southPayload?.date !== day) throw new Error('Ngày từ API không hợp lệ');
