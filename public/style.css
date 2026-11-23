@@ -9,7 +9,11 @@ button { cursor:pointer; }
 button:disabled { cursor:not-allowed; opacity:.52; }
 button:focus-visible,input:focus-visible,a:focus-visible { outline:3px solid #92aeff; outline-offset:2px; }
 .layout { max-width:1180px; margin:0 auto; padding:0 28px; }
-.topbar { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:24px 0; border-bottom:1px solid var(--line); }
+.topbar { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:24px 0; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+.topnav { display:flex; gap:6px; padding:4px; background:#fff; border:1px solid var(--line); border-radius:12px; }
+.nav-link { text-decoration:none; color:#526179; font-size:13px; font-weight:700; padding:7px 13px; border-radius:9px; transition:background .15s,color .15s; }
+.nav-link:hover { background:#f1f5ff; color:#234ad1; }
+.nav-link.active { background:#315cff; color:#fff; }
 .brand { display:flex; align-items:center; gap:12px; }
 .mark { width:43px; height:43px; border-radius:13px; display:grid; place-items:center; background:#315cff; color:#fff; font-weight:850; letter-spacing:-1px; }
 .brand strong { font-size:17px; letter-spacing:-.3px; display:block; line-height:1.2; }
@@ -279,3 +283,33 @@ footer a { color:#4969c4; }
 .distribution-number { color:#284fd0; font-size:19px; font-weight:900; }
 .distribution-score { color:#b3242e; font-weight:850; }
 @media(max-width:820px) { .distribution-controls { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+
+/* Dedicated Today Top-5 screen (/today) */
+.today-hero { padding-bottom:20px; }
+.today-screen-section { margin-top:26px; }
+.today-station-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+.scheduled-station-card { text-align:left; background:#fff; border:1.5px solid var(--line); border-radius:14px; padding:14px 16px; box-shadow:var(--shadow); display:grid; gap:7px; transition:border-color .15s,background .15s,transform .1s; }
+.scheduled-station-card:hover { border-color:#a8befa; background:#f8faff; transform:translateY(-1px); }
+.scheduled-station-card.is-selected { border-color:#315cff; background:#eef3ff; box-shadow:0 8px 24px rgba(49,92,255,.12); }
+.scheduled-card-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.scheduled-card-head strong { font-size:16px; color:var(--ink); }
+.scheduled-card-sub { font-size:12px; color:#5a6982; font-variant-numeric:tabular-nums; }
+.top5-actual-banner { border-radius:12px; padding:12px 15px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; font-size:13px; }
+.top5-actual-banner.is-hit { background:#eaf9f0; border:1px solid #b6e8ca; color:#15693f; }
+.top5-actual-banner.is-miss { background:#fff7eb; border:1px solid #f4deb9; color:#8b5614; }
+.top5-actual-banner strong { font-size:15px; font-variant-numeric:tabular-nums; }
+.top5-cards { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; }
+.top5-item { border:1px solid var(--line); border-radius:14px; padding:14px; background:#fafcff; display:grid; gap:8px; text-align:center; }
+.top5-item.is-hit { border-color:#22a567; background:#eafaf1; box-shadow:0 6px 18px rgba(34,165,103,.14); }
+.top5-item-head { display:flex; justify-content:space-between; align-items:center; font-size:11px; color:#69778e; font-weight:700; }
+.top5-rank { color:#315cff; font-weight:850; }
+.top5-number { font-size:34px; font-weight:900; letter-spacing:1.5px; color:#1d42be; font-variant-numeric:tabular-nums; line-height:1.1; }
+.top5-item.is-hit .top5-number { color:#127545; }
+.top5-detail { font-size:11px; color:#68768c; line-height:1.45; }
+.top5-disclaimer { margin:16px 0 0; }
+.traditional-table .is-selected-col { background:#f0f5ff; }
+.traditional-table th.is-selected-col { background:#e4edff; color:#1c3ea8; }
+.prize8-row .prize-name { color:#234ad1; font-weight:850; }
+.traditional-numbers .prize8-num { color:#c9242f; font-size:20px; font-weight:900; }
+@media(max-width:960px) { .top5-cards { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media(max-width:560px) { .top5-cards { grid-template-columns:repeat(2,minmax(0,1fr)); } }

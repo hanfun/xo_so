@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0f172a">
+  <title>XSMN Hôm Nay — Top 5 Giải 8 &amp; Kết Quả</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/today.js" type="module"></script>
+</head>
+<body>
+  <div class="layout">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">XS</div>
+        <div><strong>XSMN Local</strong><span>Đài xổ hôm nay · Top 5 Giải 8</span></div>
+      </div>
+      <nav class="topnav" aria-label="Điều hướng màn hình">
+        <a href="/" class="nav-link">Tổng quan</a>
+        <a href="/today" class="nav-link active">Hôm nay · Top 5</a>
+      </nav>
+      <div class="run-status"><span class="dot"></span> MySQL trên máy local</div>
+    </header>
+
+    <main>
+      <section class="hero today-hero">
+        <div class="eyebrow">MÀN HÌNH HÔM NAY / XSMN</div>
+        <h1>Đài mở thưởng &amp; <span>Top 5 Giải 8</span></h1>
+        <p>Chọn 1 đài mở thưởng để xem 5 số Giải 8 có điểm xếp hạng thống kê cao nhất (V2) và đối chiếu kết quả thực tế trong ngày.</p>
+      </section>
+
+      <section class="toolbar" aria-label="Chọn ngày xem">
+        <div class="date-wrap">
+          <label for="todayDateInput">Ngày mở thưởng</label>
+          <div class="date-group">
+            <input type="date" id="todayDateInput">
+            <button type="button" class="ghost" id="btnToday">Hôm nay</button>
+            <button type="button" class="ghost" id="btnYesterday">Hôm qua</button>
+          </div>
+        </div>
+        <div class="toolbar-actions">
+          <button type="button" class="btn secondary" id="btnRefresh">↻ Làm mới</button>
+          <button type="button" class="btn primary" id="btnScanToday">↻ Quét KQ ngày này</button>
+        </div>
+      </section>
+
+      <div class="notice" id="todayNotice" role="status" aria-live="polite">Đang tải lịch mở thưởng...</div>
+
+      <section class="today-screen-section" aria-labelledby="scheduledTitle">
+        <div class="section-top">
+          <div>
+            <div class="eyebrow">BƯỚC 1 / CHỌN ĐÀI MỞ THƯỞNG</div>
+            <h2 id="scheduledTitle">Các đài xổ trong ngày</h2>
+            <p id="scheduledMeta">Đang xác định các đài mở thưởng...</p>
+          </div>
+        </div>
+        <div id="scheduledStationGrid" class="today-station-grid" role="tablist" aria-label="Danh sách đài mở thưởng"></div>
+      </section>
+
+      <section class="today-screen-section" aria-labelledby="top5Title">
+        <div class="section-top">
+          <div>
+            <div class="eyebrow">BƯỚC 2 / XẾP HẠNG GIẢI 8 (V2)</div>
+            <h2 id="top5Title">Top 5 số Giải 8 nổi bật</h2>
+            <p id="top5Meta">Chọn một đài phía trên để xem 5 con số có điểm xếp hạng cao nhất.</p>
+          </div>
+          <div id="top5StatusBadge"></div>
+        </div>
+        <div class="panel">
+          <div id="top5ActualBanner" class="top5-actual-banner" hidden></div>
+          <div id="top5Cards" class="top5-cards">
+            <p class="placeholder">Đang tính toán xếp hạng Top 5...</p>
+          </div>
+          <p class="analysis-disclaimer top5-disclaimer">
+            Điểm xếp hạng V2 được tính từ lịch sử Giải 8 của riêng đài đang chọn trước ngày mở thưởng (dữ liệu đã lưu cố định cho hôm nay không thay đổi sau khi có kết quả). Đây là chỉ số thống kê thử nghiệm, <strong>không phải xác suất trúng đã kiểm định</strong> — trong kỳ quay công bằng độc lập, mỗi số 00–99 vẫn có xác suất lý thuyết 1%.
+          </p>
+        </div>
+      </section>
+
+      <section class="today-screen-section" aria-labelledby="todayResultTitle">
+        <div class="section-top">
+          <div>
+            <div class="eyebrow">BƯỚC 3 / KẾT QUẢ THỰC TẾ TRONG NGÀY</div>
+            <h2 id="todayResultTitle">Kết quả XSMN ngày đã chọn</h2>
+            <p id="todayResultMeta">Đang kiểm tra dữ liệu kết quả trong MySQL...</p>
+          </div>
+        </div>
+        <div id="todayResultBoard" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <footer>
+      <span>© XSMN Local · Chỉ thống kê, không đảm bảo dự đoán.</span>
+      <span><a href="/">← Quay lại Dashboard tổng quan</a></span>
+    </footer>
+  </div>
+</body>
+</html>
+

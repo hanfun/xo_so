@@ -200,6 +200,12 @@ test('API local trả kết quả miền Nam, thống kê, danh sách đài và 
     assert.match(await csv.text(),/000000/);
     assert.equal((await fetch(`${base}/api/day?date=../../etc/passwd`)).status,400);
     assert.equal((await(await fetch(`${base}/`)).text()).includes('XSMN Local'),true);
+    const todayPage=await fetch(`${base}/today`);
+    assert.equal(todayPage.status,200);
+    assert.match(await todayPage.text(),/Top 5 Giải 8/);
+    const todayJs=await fetch(`${base}/today.js`);
+    assert.equal(todayJs.status,200);
+    assert.match(await todayJs.text(),/loadTop5ForSelected/);
   }finally{await new Promise(resolve=>server.close(resolve));}
 });
 

@@ -15,8 +15,11 @@ import { stationsForDate, stationDetailsForDate, stationDisplayName, XSMN_SCHEDU
 const STATIC={
   '/':['index.html','text/html; charset=utf-8'],
   '/index.html':['index.html','text/html; charset=utf-8'],
+  '/today':['today.html','text/html; charset=utf-8'],
+  '/today.html':['today.html','text/html; charset=utf-8'],
   '/style.css':['style.css','text/css; charset=utf-8'],
-  '/app.js':['app.js','text/javascript; charset=utf-8']
+  '/app.js':['app.js','text/javascript; charset=utf-8'],
+  '/today.js':['today.js','text/javascript; charset=utf-8']
 };
 function send(res,status,body,type='application/json; charset=utf-8',extra={}) {
   res.writeHead(status,{
@@ -73,6 +76,7 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
           return json(res,200,{
             targetDate,
             scheduled,
+            scheduled_details:stationDetailsForDate(targetDate),
             predictions,
             note:'Dự đoán đã lưu không được tạo lại hoặc sửa sau khi có kết quả.'
           });
@@ -120,6 +124,7 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
             return {
               targetDate,
               scheduled,
+              scheduled_details:stationDetailsForDate(targetDate),
               generated,
               skipped,
               predictions:await db.getDailyPredictions(targetDate),

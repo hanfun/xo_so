@@ -420,6 +420,11 @@ test('daily prediction API is strictly idempotent, handles concurrency, and auto
     const getRes=await fetch(`${base}/api/prize8/daily?date=${TARGET}`);
     assert.equal(getRes.status,200);
     const getBody=await getRes.json();
+    assert.deepEqual(getBody.scheduled_details,[
+      {code:'ho-chi-minh',name:'TP. Hồ Chí Minh'},
+      {code:'dong-thap',name:'Đồng Tháp'},
+      {code:'ca-mau',name:'Cà Mau'}
+    ]);
     const afterDt=getBody.predictions.find(x=>x.province==='dong-thap');
     const afterHcm=getBody.predictions.find(x=>x.province==='ho-chi-minh');
     assert.equal(afterDt.actual,originalDt.top[0].number);
