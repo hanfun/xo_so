@@ -99,3 +99,40 @@ footer a { color:#4969c4; }
   .tabs { width:100%; justify-content:space-between; }
   .tab { padding:8px 9px; }
 }
+
+/* Southern lottery dashboard extensions */
+.stat strong.date-stat { font-size:30px; white-space:nowrap; }
+.analytics { margin-top:48px; }
+.analysis-controls { background:#fff; border:1px solid var(--line); border-radius:15px; padding:18px; display:grid; grid-template-columns:1fr 1fr 1.4fr 1fr auto; align-items:end; gap:12px; box-shadow:var(--shadow); }
+.analysis-controls label { font-size:12px; color:#5b6578; font-weight:700; display:grid; gap:8px; }
+.analysis-controls input,.analysis-controls select { width:100%; height:42px; padding:0 10px; border:1px solid #dce2ed; border-radius:9px; background:#fafbff; color:var(--ink); min-width:0; }
+.analysis-note { color:#50637f; font-size:13px; margin:14px 0 0; }
+.analysis-note.error { color:#ae3738; }
+.analysis-summary { margin:17px 0; }
+.analysis-summary .stat { padding:16px 20px; }
+.analysis-summary .stat strong { font-size:27px; margin-top:6px; }
+.analysis-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.panel { min-width:0; background:white; border:1px solid var(--line); border-radius:15px; padding:20px; box-shadow:var(--shadow); }
+.panel h3 { margin:0; font-size:16px; }
+.panel-help { margin:6px 0 18px; color:var(--muted); font-size:12px; }
+.frequency { display:grid; gap:7px; }
+.freq-row { display:grid; grid-template-columns:34px 1fr 55px 82px; align-items:center; gap:10px; font-size:12px; padding:4px 0; }
+.freq-num { font-size:16px; font-weight:850; color:#214bc2; font-variant-numeric:tabular-nums; }
+.freq-track,.month-track { background:#eef1fa; height:10px; overflow:hidden; border-radius:20px; }
+.freq-bar,.month-bar { height:100%; background:linear-gradient(90deg,#91a9ff,#315cff); border-radius:20px; min-width:2px; }
+.freq-count { text-align:right; font-weight:750; font-variant-numeric:tabular-nums; }
+.freq-last { text-align:right; color:var(--muted); font-size:11px; }
+.month-bars { display:grid; gap:11px; }
+.month-row { display:grid; grid-template-columns:62px 1fr 48px; align-items:center; gap:10px; font-size:12px; }
+.month-name { font-weight:700; }
+.month-count { text-align:right; font-weight:700; font-variant-numeric:tabular-nums; }
+.day-panel { margin-top:16px; }
+.data-table { margin-top:12px; }
+.data-table thead th { background:#f5f7fc; }
+.data-table th { width:auto; }
+.data-table td { font-variant-numeric:tabular-nums; }
+.data-table td:first-child { font-weight:700; }
+.placeholder { color:#7b879a; font-size:13px; padding:18px 0; }
+.analysis-disclaimer { color:#7b8798; font-size:12px; line-height:1.65; }
+@media (max-width:920px) { .analysis-controls { grid-template-columns:repeat(2,minmax(0,1fr)); } .analysis-controls button { grid-column:1/-1; } }
+@media (max-width:740px) { .analysis-grid { grid-template-columns:1fr; } .analysis-controls { padding:14px; gap:10px; } .freq-row { grid-template-columns:28px 1fr 43px 76px; gap:7px; } .stat strong.date-stat {font-size:19px;} }

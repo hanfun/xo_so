@@ -1,162 +1,193 @@
-const $ = id => document.getElementById(id);
-const REGIONS = { MB: 'Miền Bắc', MT: 'Miền Trung', MN: 'Miền Nam' };
-const PRIZE_LABELS = {
-  giaidb: 'Đặc biệt', giai1: 'Giải 1', giai2: 'Giải 2', giai3: 'Giải 3',
-  giai4: 'Giải 4', giai5: 'Giải 5', giai6: 'Giải 6', giai7: 'Giải 7', giai8: 'Giải 8'
+const $=id=>document.getElementById(id);
+const LABELS={
+  giaidb:'Đặc biệt',giai1:'Giải 1',giai2:'Giải 2',giai3:'Giải 3',giai4:'Giải 4',
+  giai5:'Giải 5',giai6:'Giải 6',giai7:'Giải 7',giai8:'Giải 8'
 };
-let selectedRegion = 'ALL';
-let today = '';
-let report = null;
-let busy = false;
+let today='', report=null, collecting=false, analyzing=false;
+const nf=new Intl.NumberFormat('vi-VN');
+function el(tag,cls,text) {
+  const e=document.createElement(tag);
+  if(cls)e.className=cls;
+  if(text!==undefined)e.textContent=String(text);
+  return e;
+}
+function relativeDay(day,delta) {
+  const d=new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate()+delta);
+  return d.toISOString().slice(0,10);
+}
+function dateLabel(day) {
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(day))return day;
+  return new Intl.DateTimeFormat('vi-VN',{day:'2-digit',month:'2-digit',year:'numeric',
+    weekday:'long',timeZone:'UTC'}).format(new Date(`${day}T12:00:00Z`));
+}
+function notice(message,tone='') {
+  $('notice').textContent=message;
+  $('notice').className=`notice ${tone}`;
+}
+async function api(path,options) {
+  const response=await fetch(path,options);
+  const body=await response.json();
+  if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+  return body;
+}
+async function loadDay() {
+  const day=$('dateInput').value;
+  try {
+    const data=await api(`/api/day?date=${encodeURIComponent(day)}`);
+    if(day!==$('dateInput').value)return;
+    report=data;
+    renderResults();
+  } catch(e) { notice(`Lỗi tải dữ liệu: ${e.message}`,'error'); }
+}
+function renderResults() {
+  const data=report||{date:$('dateInput').value,count:0,results:[]};
+  $('countMN').textContent=nf.format(data.count||0);
+  $('countPrizes').textContent=nf.format((data.results||[]).reduce((n,d)=>
+    n+Object.values(d.prizes||{}).reduce((s,arr)=>s+arr.length,0),0));
+  $('dayDisplay').textContent=data.date.split('-').reverse().join('/');
+  $('csvBtn').disabled=!data.count;
+  $('meta').textContent=`${dateLabel(data.date)} · ${data.count||0} đài miền Nam`;
+  if(!data.count)notice('Chưa có dữ liệu XSMN ngày này. Chọn ngày khác hoặc bấm Quét XSMN.','warn');
+  else if(data.status==='complete_by_provider_count')
+    notice(`Đã lưu ${data.count} đài XSMN · ${new Date(data.fetched_at).toLocaleString('vi-VN')} (dữ liệu tham khảo).`,'ok');
+  else notice(`Có ${data.count} đài; dữ liệu chưa đủ/đang kiểm tra. ${(data.issues||[]).slice(0,2).join(' · ')}`,'warn');
 
-function make(tag, className, text) {
-  const el = document.createElement(tag);
-  if (className) el.className = className;
-  if (text !== undefined) el.textContent = text;
-  return el;
-}
-function dateLabel(date) {
-  const dateObject = new Date(`${date}T12:00:00Z`);
-  if (Number.isNaN(dateObject.getTime())) return date;
-  return new Intl.DateTimeFormat('vi-VN', {
-    weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC'
-  }).format(dateObject);
-}
-function prevDay(day) {
-  const d = new Date(`${day}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
-}
-function notice(text, tone = '') {
-  $('notice').textContent = text;
-  $('notice').className = `notice ${tone}`;
-}
-function setBusy(on) {
-  busy = on;
-  $('collectBtn').disabled = on;
-  $('collectBtn').textContent = on ? '↻ Đang quét...' : '↻ Quét kết quả';
-}
-async function getJson(path, options) {
-  const response = await fetch(path, options);
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-  return data;
-}
-async function load() {
-  const day = $('dateInput').value;
-  try {
-    const data = await getJson(`/api/day?date=${encodeURIComponent(day)}`);
-    if (day !== $('dateInput').value) return;
-    report = data;
-    render();
-  } catch (error) {
-    notice(`Không đọc được dữ liệu local: ${error.message}`, 'error');
+  const root=$('results');root.replaceChildren();
+  if(!(data.results||[]).length) {
+    const empty=el('div','empty');
+    empty.append(el('div','empty-icon','▤'),el('strong','','Chưa có kết quả xổ số miền Nam'));
+    empty.append(el('p','','Có thể nhập lịch sử bằng lệnh npm run history:import hoặc quét ngày đang xem.'));
+    root.append(empty);return;
   }
-}
-function render() {
-  const data = report || { results: [], region_counts: {}, date: $('dateInput').value };
-  for (const region of ['MB', 'MT', 'MN']) {
-    $(`count${region}`).textContent = String(data.region_counts?.[region] || 0);
-  }
-  $('csvBtn').disabled = !data.count;
-  $('meta').textContent = `${dateLabel(data.date)} · ${data.count || 0} đài có kết quả`;
-  if (!data.count) {
-    notice(`Chưa có kết quả đã lưu cho ngày ${dateLabel(data.date)}. Bấm “Quét kết quả” để kiểm tra nguồn.`, 'warn');
-  } else if (data.status === 'complete_by_provider_count') {
-    notice(`Đã lưu ${data.count} đài của cả 3 miền · Cập nhật ${new Date(data.fetched_at).toLocaleString('vi-VN')}${data.cached ? ' (dữ liệu đệm 5 phút)' : ''}.`, 'ok');
-  } else {
-    const issues = data.issues?.length ? ` ${data.issues.length} vấn đề: ${data.issues.slice(0, 2).join(' · ')}` : '';
-    notice(`Đã có ${data.count || 0} đài nhưng chưa xác nhận đủ 3 miền / khớp số đài API.${issues}`, 'warn');
-  }
-  const container = $('results');
-  container.replaceChildren();
-  const filtered = (data.results || []).filter(r => selectedRegion === 'ALL' || r.region === selectedRegion);
-  if (filtered.length === 0) {
-    const empty = make('div', 'empty');
-    empty.append(make('div', 'empty-icon', '▤'));
-    empty.append(make('strong', '', 'Chưa có kết quả để hiển thị'));
-    empty.append(make('p', '', 'Hãy chọn ngày hoặc miền khác, hoặc bấm “Quét kết quả” để lấy dữ liệu mới.'));
-    container.append(empty);
-    return;
-  }
-  for (const draw of filtered) {
-    const card = make('article', 'result-card');
-    const header = make('div', 'card-header');
-    const headline = make('div', 'card-headline');
-    headline.append(make('h3', '', draw.name));
-    headline.append(make('small', '', `${REGIONS[draw.region] || draw.region}${draw.ticket_type ? ` · Ký hiệu ${draw.ticket_type}` : ''}`));
-    header.append(headline, make('div', 'card-prize', draw.prizes?.giaidb?.[0] || '—'));
+  for(const draw of data.results) {
+    if(draw.region!=='MN')continue;
+    const card=el('article','result-card');
+    const header=el('div','card-header');
+    const title=el('div','card-headline');
+    title.append(el('h3','',draw.name),el('small','',`Miền Nam · ${dateLabel(draw.date)}`));
+    header.append(title,el('div','card-prize',draw.prizes?.giaidb?.[0]||'—'));
     card.append(header);
-    const scroll = make('div', 'table-scroll');
-    const table = make('table');
-    const body = make('tbody');
-    for (const [tier, label] of Object.entries(PRIZE_LABELS)) {
-      const numbers = draw.prizes?.[tier];
-      if (!Array.isArray(numbers)) continue;
-      const row = make('tr');
-      row.append(make('th', '', label));
-      const cell = make('td');
-      const numbersEl = make('div', 'number-wrap');
-      numbers.forEach(number => numbersEl.append(make('span', `num${tier === 'giaidb' ? ' special' : ''}`, number)));
-      cell.append(numbersEl);
-      row.append(cell);
-      body.append(row);
+    const scroll=el('div','table-scroll');
+    const table=el('table');const tbody=el('tbody');
+    for(const [tier,label] of Object.entries(LABELS)) {
+      const nums=draw.prizes?.[tier];
+      if(!Array.isArray(nums))continue;
+      const tr=el('tr');tr.append(el('th','',label));
+      const td=el('td');const wrap=el('div','number-wrap');
+      nums.forEach(n=>wrap.append(el('span',`num${tier==='giaidb'?' special':''}`,n)));
+      td.append(wrap);tr.append(td);tbody.append(tr);
     }
-    table.append(body);
-    scroll.append(table);
-    card.append(scroll);
-    const footer = make('div', 'card-footer');
-    footer.append(document.createTextNode(`Ngày ${dateLabel(draw.date)} · `));
-    const link = make('a', '', 'Nguồn dữ liệu ↗');
-    link.href = draw.source || data.source_url || 'https://doveso.submit69.com/api/';
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    footer.append(link);
-    card.append(footer);
-    container.append(card);
+    table.append(tbody);scroll.append(table);card.append(scroll);
+    const foot=el('div','card-footer');
+    foot.append(document.createTextNode('Nguồn tổng hợp: '));
+    const link=el('a','','Xem JSON nguồn ↗');
+    link.href=draw.source||data.source_url||'https://doveso.submit69.com/api/';
+    link.rel='noopener noreferrer';link.target='_blank';
+    foot.append(link);card.append(foot);root.append(card);
   }
 }
-async function collect() {
-  if (busy) return;
-  const day = $('dateInput').value;
-  setBusy(true);
-  notice(`Đang kiểm tra kết quả ngày ${dateLabel(day)}...`);
+async function scan() {
+  if(collecting)return;
+  const day=$('dateInput').value; collecting=true;
+  $('collectBtn').disabled=true; $('collectBtn').textContent='Đang quét...';
+  notice(`Đang lấy kết quả miền Nam ngày ${day}...`);
   try {
-    report = await getJson(`/api/collect?date=${encodeURIComponent(day)}`, { method: 'POST' });
-    if (day === $('dateInput').value) render();
-  } catch (error) {
-    notice(`Không cập nhật được ngày ${dateLabel(day)}: ${error.message}. Dữ liệu đã lưu (nếu có) vẫn được giữ nguyên.`, 'error');
-  } finally { setBusy(false); }
+    const data=await api(`/api/collect?date=${encodeURIComponent(day)}`,{method:'POST'});
+    if(day===$('dateInput').value){report=data;renderResults();}
+    await Promise.all([loadStations(),analyze()]);
+  } catch(e) {notice(`Lỗi cập nhật: ${e.message}. Kết quả đã lưu không bị xóa.`,'error');}
+  finally{collecting=false;$('collectBtn').disabled=false;$('collectBtn').textContent='↻ Quét XSMN';}
+}
+async function loadStations() {
+  try {
+    const data=await api('/api/stations');
+    const select=$('stationSelect');const previous=select.value;
+    select.replaceChildren();
+    select.append(new Option('Tất cả đài miền Nam',''));
+    (data.stations||[]).forEach(s=>select.append(new Option(`${s.name} (${nf.format(s.draw_count)} kỳ)`,s.code)));
+    if([...select.options].some(x=>x.value===previous))select.value=previous;
+  } catch(e) {$('analysisNote').textContent=`Không tải được danh sách đài: ${e.message}`;}
+}
+function renderAnalysis(data) {
+  $('totalNumbers').textContent=nf.format(data.totals.numbers);
+  $('totalDraws').textContent=nf.format(data.totals.draws);
+  $('totalDays').textContent=nf.format(data.totals.days);
+  $('analysisNote').className='analysis-note';
+  $('analysisNote').textContent=data.totals.numbers
+    ?`Đã thống kê ${nf.format(data.totals.numbers)} kết quả từ ${nf.format(data.totals.draws)} lượt đài; nhóm theo 2 số cuối của mỗi kết quả.`
+    :'Không có dữ liệu trong bộ lọc. Hãy quét hoặc nhập lịch sử trước khi phân tích.';
+  const list=$('frequency');list.replaceChildren();
+  const max=Math.max(1,...data.frequency.map(f=>f.appearances));
+  if(!data.frequency.length)list.append(el('p','placeholder','Chưa có số liệu.'));
+  for(const entry of data.frequency) {
+    const row=el('div','freq-row');
+    row.append(el('strong','freq-num',entry.tail.padStart(2,'0')));
+    const track=el('div','freq-track');const fill=el('div','freq-bar');
+    fill.style.width=`${Math.max(2,entry.appearances/max*100)}%`;
+    track.append(fill);row.append(track,el('span','freq-count',nf.format(entry.appearances)),
+      el('span','freq-last',entry.last_seen||'—'));
+    row.title=`${entry.tail}: ${entry.appearances} lần, lần gần nhất ${entry.last_seen||'—'}`;
+    list.append(row);
+  }
+  const months=$('monthBars');months.replaceChildren();
+  const maxMonth=Math.max(1,...data.months.map(m=>m.numbers));
+  if(!data.months.length)months.append(el('p','placeholder','Chưa có dữ liệu theo tháng.'));
+  for(const entry of data.months) {
+    const row=el('div','month-row');
+    row.append(el('span','month-name',entry.month));
+    const track=el('div','month-track'),bar=el('div','month-bar');
+    bar.style.width=`${Math.max(2,entry.numbers/maxMonth*100)}%`;
+    track.append(bar);row.append(track,el('span','month-count',nf.format(entry.numbers)));
+    row.title=`${entry.month}: ${entry.numbers} kết quả từ ${entry.draws} lượt đài`;
+    months.append(row);
+  }
+  const days=$('dailyRows');days.replaceChildren();
+  if(!data.days.length) {
+    const tr=el('tr');const td=el('td','','Chưa có dữ liệu');td.colSpan=3;tr.append(td);days.append(tr);
+  }
+  for(const entry of data.days) {
+    const tr=el('tr');
+    tr.append(el('td','',entry.date.split('-').reverse().join('/')),
+      el('td','',nf.format(entry.draws)),el('td','',nf.format(entry.numbers)));
+    days.append(tr);
+  }
+}
+async function analyze() {
+  if(analyzing)return;
+  const from=$('fromDate').value,to=$('toDate').value;
+  if(!from||!to||from>to) {
+    $('analysisNote').textContent='Hãy chọn khoảng thời gian hợp lệ.';return;
+  }
+  analyzing=true;$('analyzeBtn').disabled=true;
+  $('analysisNote').textContent='Đang tính thống kê từ MySQL...';
+  const params=new URLSearchParams({
+    from,to,province:$('stationSelect').value,prize:$('prizeSelect').value
+  });
+  try { renderAnalysis(await api(`/api/stats?${params}`)); }
+  catch(e) {
+    $('analysisNote').className='analysis-note error';
+    $('analysisNote').textContent=`Không thống kê được: ${e.message}`;
+  } finally { analyzing=false;$('analyzeBtn').disabled=false; }
 }
 async function bootstrap() {
   try {
-    const status = await getJson('/api/status');
-    today = status.today;
-    $('dateInput').max = today;
-    $('dateInput').value = today;
-    await load();
-  } catch (error) {
-    notice(`Không kết nối được máy chủ Node.js: ${error.message}`, 'error');
-  }
+    const status=await api('/api/status');
+    today=status.today;
+    $('dateInput').max=today;$('toDate').max=today;
+    $('dateInput').value=today;
+    $('toDate').value=today;$('fromDate').value=relativeDay(today,-89);
+    await Promise.all([loadDay(),loadStations()]);
+    await analyze();
+  } catch(e) {notice(`Không kết nối được máy chủ: ${e.message}`,'error');}
 }
-$('dateInput').addEventListener('change', load);
-$('todayBtn').addEventListener('click', () => { $('dateInput').value = today; void load(); });
-$('yesterdayBtn').addEventListener('click', () => { $('dateInput').value = prevDay(today); void load(); });
-$('collectBtn').addEventListener('click', collect);
-$('csvBtn').addEventListener('click', () => {
-  if (report?.count) window.location.href = `/api/export.csv?date=${encodeURIComponent(report.date)}`;
-});
-document.querySelectorAll('.tab').forEach(button => {
-  button.addEventListener('click', () => {
-    selectedRegion = button.dataset.region;
-    document.querySelectorAll('.tab').forEach(b => {
-      const active = b.dataset.region === selectedRegion;
-      b.classList.toggle('active', active);
-      b.setAttribute('aria-pressed', String(active));
-    });
-    render();
-  });
+$('todayBtn').addEventListener('click',()=>{$('dateInput').value=today;void loadDay();});
+$('yesterdayBtn').addEventListener('click',()=>{$('dateInput').value=relativeDay(today,-1);void loadDay();});
+$('dateInput').addEventListener('change',loadDay);
+$('collectBtn').addEventListener('click',scan);
+$('analyzeBtn').addEventListener('click',analyze);
+$('csvBtn').addEventListener('click',()=>{
+  if(report?.count)location.href=`/api/export.csv?date=${encodeURIComponent(report.date)}`;
 });
 void bootstrap();
-// Update UI when the background scheduler has finished. GET /api/day reads only local files.
-setInterval(() => { if (!busy && $('dateInput').value) void load(); }, 60_000);
+setInterval(()=>{if(!collecting && $('dateInput').value)void loadDay();},60_000);

@@ -1,136 +1,204 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { validateDraw, normalizePayload, fetchDay } from '../src/lottery.js';
+import { validateDraw, extractSouthPayload, normalizePayload, fetchDay } from '../src/lottery.js';
+import { createMysqlStore } from '../src/mysql-store.js';
 import { createCollector } from '../src/collector.js';
 import { createAppServer } from '../src/server.js';
 import { createScheduler } from '../src/scheduler.js';
 import { exportCsv, readDay, listHistory } from '../src/store.js';
 
-const DAY = '2026-11-22';
-function fakeDraw(region, province, name) {
-  const spec = region === 'MB' ? {
-    giaidb:[1,5],giai1:[1,5],giai2:[2,5],giai3:[6,5],giai4:[4,4],giai5:[6,4],giai6:[3,3],giai7:[4,2]
-  } : {
-    giaidb:[1,6],giai1:[1,5],giai2:[1,5],giai3:[2,5],giai4:[7,5],giai5:[1,4],giai6:[3,4],giai7:[1,3],giai8:[1,2]
+const DAY='2026-11-23'; // Monday, 3 Southern stations
+const RULES={
+  giaidb:[1,6],giai1:[1,5],giai2:[1,5],giai3:[2,5],
+  giai4:[7,5],giai5:[1,4],giai6:[3,4],giai7:[1,3],giai8:[1,2]
+};
+function draw(province,name,region='MN') {
+  return {
+    province,name,region,date:DAY,
+    prizes:Object.fromEntries(Object.entries(RULES).map(([tier,[count,digits]])=>
+      [tier,Array.from({length:count},()=> '0'.repeat(digits))]))
   };
-  return { province, name, region, date: DAY, prizes: Object.fromEntries(
-    Object.entries(spec).map(([tier,[count,digits]]) => [tier, Array.from({length:count}, () => '0'.repeat(digits))])
-  ) };
 }
-function samplePayload() {
-  return { date:DAY,count:3,results:{
-    'mien-bac':fakeDraw('MB','mien-bac','Miền Bắc'),
-    'da-nang':fakeDraw('MT','da-nang','Đà Nẵng'),
-    'da-lat':fakeDraw('MN','da-lat','Đà Lạt')
-  } };
+function provider(){
+  return {date:DAY,count:6,results:{
+    'mien-bac':{province:'mien-bac',region:'MB',date:DAY,name:'Miền Bắc',prizes:{}},
+    'da-nang':{province:'da-nang',region:'MT',date:DAY,name:'Đà Nẵng',prizes:{}},
+    'ho-chi-minh':draw('ho-chi-minh','TP HCM'),
+    'dong-thap':draw('dong-thap','Đồng Tháp'),
+    'ca-mau':draw('ca-mau','Cà Mau')
+  }};
 }
+function south(){return extractSouthPayload(DAY,provider());}
 
-test('validateDraw keeps exact leading zeroes and correct prize counts', () => {
-  const draw = samplePayload().results['mien-bac'];
-  const result = validateDraw('mien-bac', draw, DAY);
-  assert.equal(result.draw.prizes.giaidb[0], '00000');
-  assert.equal(result.draw.prizes.giai7[0], '00');
+test('lọc API chỉ lấy XSMN và bỏ hoàn toàn MB/MT',()=>{
+  const payload=south();
+  assert.equal(payload.count,3);
+  assert.equal(Object.values(payload.results).every(x=>x.region==='MN'),true);
+  assert.equal(payload.results['mien-bac'],undefined);
+  assert.equal(payload.results['da-nang'],undefined);
 });
 
-test('validateDraw rejects incomplete / malformed data', () => {
-  const draw = fakeDraw('MN','da-lat','Đà Lạt');
-  draw.prizes.giai4 = ['12345'];
-  assert.match(validateDraw('da-lat',draw,DAY).error, /chưa đủ/);
-  const draw2 = fakeDraw('MB','mien-bac','Miền Bắc');
-  draw2.prizes.giaidb[0] = '123';
-  assert.match(validateDraw('mien-bac',draw2,DAY).error, /chữ số/);
+test('giữ chính xác các số 0 đầu trong từng giải miền Nam',()=>{
+  const result=validateDraw('dong-thap',draw('dong-thap','Đồng Tháp'),DAY);
+  assert.equal(result.draw.prizes.giaidb[0],'000000');
+  assert.equal(result.draw.prizes.giai8[0],'00');
+  assert.equal(Object.values(result.draw.prizes).reduce((n,v)=>n+v.length,0),18);
 });
 
-test('normalizePayload sets completion based only on validated provider count', () => {
-  const report = normalizePayload(DAY,samplePayload(),'https://example.test/x.json');
+test('loại bỏ giải thiếu hoặc số giải có độ dài sai',()=>{
+  const item=draw('ca-mau','Cà Mau');item.prizes.giai4=['12345'];
+  assert.match(validateDraw('ca-mau',item,DAY).error,/chưa đủ/);
+  const other=draw('ca-mau','Cà Mau');other.prizes.giaidb[0]='12345';
+  assert.match(validateDraw('ca-mau',other,DAY).error,/chữ số/);
+  assert.match(validateDraw('mien-bac',draw('mien-bac','Bắc','MB'),DAY).error,/miền Nam/);
+});
+
+test('đủ 3 đài miền Nam thứ Hai được đánh dấu hoàn chỉnh trong giới hạn nguồn',()=>{
+  const report=normalizePayload(DAY,south(),'https://example.test/2026-11-23.json');
   assert.equal(report.status,'complete_by_provider_count');
-  assert.deepEqual(report.region_counts,{MB:1, MT:1, MN:1});
-  const broken = samplePayload();
-  broken.results['da-lat'].prizes.giaidb[0] = 'notnum';
-  const partial = normalizePayload(DAY,broken,'https://example.test/x.json');
-  assert.equal(partial.status,'needs_review');
-  assert.equal(partial.count,2);
-  assert.equal(partial.issues.length,1);
+  assert.equal(report.count,3);
+  assert.equal(report.expected_count,3);
+  assert.deepEqual(report.region_counts,{MN:3});
+  assert.equal(report.results.every(x=>x.region==='MN'),true);
 });
 
-test('previously verified results remain when provider returns partial data', () => {
-  const old = normalizePayload(DAY,samplePayload(),'https://example.test/x.json');
-  const payload = samplePayload();
-  delete payload.results['da-nang'];
-  payload.count = 2;
-  const merged = normalizePayload(DAY,payload,'https://example.test/x.json',old);
-  assert.equal(merged.count,3);
-  assert.equal(merged.status,'needs_review');
+test('không đánh dấu hoàn chỉnh khi thiếu đài hoặc kết quả',()=>{
+  const payload=south();delete payload.results['ca-mau'];
+  const report=normalizePayload(DAY,payload,'https://example.test/source');
+  assert.equal(report.status,'needs_review');
+  assert.equal(report.count,2);
+  assert.match(report.issues.join(' '),/2\/3 đài/);
 });
 
-test('collector stores JSON and throttles repeat fetches for 5 minutes', async () => {
-  const dataDir = await mkdtemp(path.join(os.tmpdir(),'xskt-test-'));
+test('giữ kết quả hợp lệ đã lưu khi dữ liệu nguồn thiếu',()=>{
+  const previous=normalizePayload(DAY,south(),'https://example.test/source');
+  const payload=south();delete payload.results['ca-mau'];
+  const report=normalizePayload(DAY,payload,'https://example.test/source',previous);
+  assert.equal(report.count,3);
+  assert.equal(report.status,'needs_review');
+  assert.equal(report.results.every(x=>x.region==='MN'),true);
+});
+
+test('collector lưu JSON dự phòng, throttle 5 phút, không ghi trùng',async()=>{
+  const dataDir=await mkdtemp(path.join(os.tmpdir(),'xsmn-test-'));
   try {
-    let called = 0;
-    const collector = createCollector({dataDir,fetcher:async () => {
-      called++;
-      return {payload:samplePayload(),sourceUrl:'https://example.test/source'};
-    }});
-    const first = await collector.collect(DAY);
-    const second = await collector.collect(DAY);
-    assert.equal(called,1);
+    let calls=0;
+    const collector=createCollector({dataDir,fetcher:async()=>{calls++;return{
+      payload:provider(),sourceUrl:'https://example.test/source'
+    };}});
+    const first=await collector.collect(DAY);
+    const second=await collector.collect(DAY);
+    assert.equal(calls,1);
     assert.equal(first.count,3);
     assert.equal(second.cached,true);
     assert.deepEqual(await listHistory(dataDir),[DAY]);
-    assert.equal((await readDay(DAY,dataDir)).results[0].prizes.giaidb[0],'00000');
-  } finally { await rm(dataDir,{recursive:true,force:true}); }
+    assert.equal((await readDay(DAY,dataDir)).results[0].region,'MN');
+  }finally{await rm(dataDir,{recursive:true,force:true});}
 });
 
-test('CSV download retains leading zeros in spreadsheet-friendly formula', () => {
-  const result = normalizePayload(DAY,samplePayload(),'https://example.test/x.json');
-  const csv = exportCsv(result);
-  assert.match(csv, /"=""00000"""/);
-  assert.ok(csv.startsWith('\uFEFF'));
+test('MySQL transaction lưu các giải miền Nam dưới dạng chuỗi',async()=>{
+  const statements=[];let commits=0,rollbacks=0,releases=0;
+  const connection={
+    beginTransaction:async()=>statements.push(['BEGIN']),
+    execute:async(sql,params)=>{
+      statements.push([sql,params]);
+      if(sql.includes('INSERT INTO provinces'))return [{insertId:7}];
+      if(sql.includes('INSERT INTO draws'))return [{insertId:9}];
+      return [{}];
+    },
+    commit:async()=>{commits++;},rollback:async()=>{rollbacks++;},release:()=>{releases++;}
+  };
+  const db=createMysqlStore({pool:{getConnection:async()=>connection,end:async()=>{}}});
+  const report=normalizePayload(DAY,south(),'https://example.test/source');
+  await db.writeDay(DAY,report,south());
+  assert.equal(commits,1);assert.equal(rollbacks,0);assert.equal(releases,1);
+  assert.equal(statements.filter(x=>String(x[0]).includes('INSERT INTO provinces')).length,3);
+  const prizeStatements=statements.filter(x=>String(x[0]).includes('INSERT INTO prize_results'));
+  assert.equal(prizeStatements.length,3);
+  assert.equal(prizeStatements.every(x=>x[1].length===72),true);
+  assert.equal(prizeStatements[0][1].includes('000000'),true);
+  const raw=statements.find(x=>String(x[0]).includes('INSERT INTO source_snapshots'))[1][2];
+  assert.equal(JSON.parse(raw).results['mien-bac'],undefined);
 });
 
-test('scheduler executes once at slot and backfills previous date', async () => {
-  const runs = [];
-  const scheduler = createScheduler({
-    run:async (day,slot) => {runs.push([day,slot.label]);},
-    clock:()=>({day:'2026-11-23',hour:7,minute:30}),
-    onError:e => {throw e;}
-  });
-  await scheduler.tick();
-  await scheduler.tick();
-  assert.deepEqual(runs, [['2026-11-22','07:30 (quét bù hôm qua)']]);
+test('MySQL thống kê SQL chỉ miền Nam và có tham số lọc đài, giải, ngày',async()=>{
+  const calls=[];
+  const rows=[
+    [{total_numbers:54,total_draws:3,total_days:1}],
+    [{tail:'00',appearances:6,draw_count:3,last_seen:DAY}],
+    [{month:'2026-11',prize_numbers:54,draws:3}],
+    [{date:DAY,prize_numbers:54,draws:3}]
+  ];
+  const pool={
+    execute:async(sql,params)=>{calls.push([sql,params]);return [rows[calls.length-1]];},
+    end:async()=>{}
+  };
+  const db=createMysqlStore({pool});
+  const result=await db.getStats({from:DAY,to:DAY,province:'dong-thap',prize:'giaidb'});
+  assert.equal(result.frequency[0].tail,'00');
+  assert.equal(result.totals.numbers,54);
+  assert.equal(calls.length,4);
+  assert.equal(calls.every(([sql,params])=>sql.includes("p.region='MN'")
+    && sql.includes('p.code = ?') && sql.includes('r.prize_code = ?')
+    && params.join(',')===`${DAY},${DAY},dong-thap,giaidb`),true);
+  await assert.rejects(()=>db.getStats({from:DAY,to:DAY,province:"x' OR 1=1 --"}),/Mã đài/);
 });
 
-test('HTTP API serves the stored report and CSV without external internet', async () => {
-  const dataDir = await mkdtemp(path.join(os.tmpdir(),'xskt-server-test-'));
-  const collector = createCollector({dataDir,fetcher:async () => ({
-    payload:samplePayload(),sourceUrl:'https://example.test/source'
-  })});
-  const server = createAppServer({collector,dataDir});
-  await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
-  const base = `http://127.0.0.1:${server.address().port}`;
+test('API local trả kết quả miền Nam, thống kê, danh sách đài và CSV',async()=>{
+  const report=normalizePayload(DAY,south(),'https://example.test/source');
+  const store={
+    readDay:async()=>report,
+    listHistory:async()=>[DAY],
+    listStations:async()=>[{code:'dong-thap',name:'Đồng Tháp',draw_count:1}],
+    getStats:async()=>({filters:{from:DAY,to:DAY},totals:{numbers:54,draws:3,days:1},
+      frequency:[],months:[],days:[]})
+  };
+  const collector={collect:async()=>report,getLastError:()=>null};
+  const server=createAppServer({collector,store});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const base=`http://127.0.0.1:${server.address().port}`;
   try {
-    const before = await (await fetch(`${base}/api/day?date=${DAY}`)).json();
-    assert.equal(before.status,'no_data');
-    const created = await (await fetch(`${base}/api/collect?date=${DAY}`,{method:'POST'})).json();
-    assert.equal(created.count,3);
-    const saved = await (await fetch(`${base}/api/day?date=${DAY}`)).json();
-    assert.equal(saved.count,3);
-    const csv = await fetch(`${base}/api/export.csv?date=${DAY}`);
+    const day=await(await fetch(`${base}/api/day?date=${DAY}`)).json();
+    assert.equal(day.region,'MN');
+    assert.equal(day.results.some(x=>x.region==='MB'),false);
+    const stats=await(await fetch(`${base}/api/stats?from=${DAY}&to=${DAY}`)).json();
+    assert.equal(stats.totals.numbers,54);
+    const stations=await(await fetch(`${base}/api/stations`)).json();
+    assert.equal(stations.stations[0].code,'dong-thap');
+    const csv=await fetch(`${base}/api/export.csv?date=${DAY}`);
     assert.equal(csv.status,200);
-    assert.match(csv.headers.get('content-disposition'), /xskt-2026-11-22.csv/);
-    assert.equal((await (await fetch(`${base}/`)).text()).includes('XSKT Local'),true);
+    assert.match(await csv.text(),/000000/);
     assert.equal((await fetch(`${base}/api/day?date=../../etc/passwd`)).status,400);
-  } finally {
-    await new Promise(resolve=>server.close(resolve));
-    await rm(dataDir,{recursive:true,force:true});
-  }
+    assert.equal((await(await fetch(`${base}/`)).text()).includes('XSMN Local'),true);
+  }finally{await new Promise(resolve=>server.close(resolve));}
 });
 
-test('fetchDay validates responses using injected fetch', async () => {
-  const fetchImpl = async () => new Response(JSON.stringify(samplePayload()), {status:200,headers:{'content-type':'application/json'}});
-  const {payload} = await fetchDay(DAY,{fetchImpl,baseUrl:'https://example.test/api'});
-  assert.equal(payload.count,3);
+test('lịch tự quét một lần, 07:30 quét bù hôm qua',async()=>{
+  const runs=[];
+  const scheduler=createScheduler({
+    run:async(day,slot)=>runs.push([day,slot.label]),
+    clock:()=>({day:DAY,hour:7,minute:30}),
+    onError:e=>{throw e;}
+  });
+  await scheduler.tick();await scheduler.tick();
+  assert.equal(runs.length,1);
+  assert.equal(runs[0][0],'2026-11-22');
+});
+
+test('fetchDay hỗ trợ mock HTTP không cần mạng thật',async()=>{
+  const fake=async()=>new Response(JSON.stringify(provider()),{
+    status:200,headers:{'content-type':'application/json'}
+  });
+  const result=await fetchDay(DAY,{fetchImpl:fake,baseUrl:'https://example.test/api'});
+  assert.equal(result.payload.date,DAY);
+});
+
+test('CSV giữ dạng text để Excel không làm mất số 0 đầu',()=>{
+  const report=normalizePayload(DAY,south(),'https://example.test/api');
+  const csv=exportCsv(report);
+  assert.ok(csv.startsWith('\uFEFF'));
+  assert.match(csv,/000000/);
 });

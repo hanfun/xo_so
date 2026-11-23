@@ -1,14 +1,11 @@
 import { vnClock, prevDay } from './config.js';
 
-// Cron-like recurring slots in Vietnam local time. One scheduler remains active
-// while the Node process runs; you never need to recreate a cron every day.
 export const SLOTS = [
-  { hour: 19, minute: 15, offset: 0, label: '19:15' },
-  { hour: 20, minute: 0, offset: 0, label: '20:00' },
-  { hour: 21, minute: 0, offset: 0, label: '21:00' },
+  { hour: 17, minute: 0, offset: 0, label: '17:00' },
+  { hour: 18, minute: 0, offset: 0, label: '18:00' },
+  { hour: 19, minute: 0, offset: 0, label: '19:00' },
   { hour: 7, minute: 30, offset: -1, label: '07:30 (quét bù hôm qua)' }
 ];
-
 export function createScheduler({ run, clock = vnClock, onError = console.error, slots = SLOTS }) {
   const fired = new Set();
   let timer;
