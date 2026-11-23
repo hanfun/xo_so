@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0f172a">
+  <title>XSKT Local — Kết quả xổ số kiến thiết</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" type="module"></script>
+</head>
+<body>
+  <div class="layout">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">XS</div>
+        <div>
+          <strong>XSKT Local</strong>
+          <span>Bảng kết quả xổ số kiến thiết</span>
+        </div>
+      </div>
+      <div class="run-status"><span class="dot"></span> Chạy trên máy của bạn</div>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="pageTitle">
+        <div class="eyebrow">DASHBOARD / KẾT QUẢ HÀNG NGÀY</div>
+        <h1 id="pageTitle">Kết quả xổ số <span>3 miền</span></h1>
+        <p>Tự động cập nhật theo lịch, lưu dữ liệu trên máy và tra cứu theo ngày.</p>
+      </section>
+
+      <section class="toolbar" aria-label="Bộ lọc và thao tác">
+        <div class="date-wrap">
+          <label for="dateInput">Ngày mở thưởng</label>
+          <div class="date-group">
+            <input type="date" id="dateInput" aria-label="Chọn ngày mở thưởng">
+            <button type="button" class="ghost" id="todayBtn">Hôm nay</button>
+            <button type="button" class="ghost" id="yesterdayBtn">Hôm qua</button>
+          </div>
+        </div>
+        <div class="toolbar-actions">
+          <button type="button" class="btn secondary" id="csvBtn" disabled>↓ Tải CSV</button>
+          <button type="button" class="btn primary" id="collectBtn">↻ Quét kết quả</button>
+        </div>
+      </section>
+
+      <div class="notice" id="notice" role="status" aria-live="polite">
+        Đang tải dữ liệu...
+      </div>
+
+      <section class="summary" aria-label="Thống kê số đài có kết quả">
+        <div class="stat">
+          <div class="stat-head"><span class="badge-region north">BẮC</span><span>01</span></div>
+          <strong id="countMB">—</strong>
+          <div class="stat-label">Đài miền Bắc</div>
+        </div>
+        <div class="stat">
+          <div class="stat-head"><span class="badge-region central">TRUNG</span><span>02</span></div>
+          <strong id="countMT">—</strong>
+          <div class="stat-label">Đài miền Trung</div>
+        </div>
+        <div class="stat">
+          <div class="stat-head"><span class="badge-region south">NAM</span><span>03</span></div>
+          <strong id="countMN">—</strong>
+          <div class="stat-label">Đài miền Nam</div>
+        </div>
+      </section>
+
+      <section class="results-section" aria-labelledby="resultsTitle">
+        <div class="section-top">
+          <div>
+            <h2 id="resultsTitle">Bảng kết quả</h2>
+            <p id="meta">Chọn ngày để xem các đài mở thưởng</p>
+          </div>
+          <div class="tabs" role="group" aria-label="Lọc theo miền">
+            <button class="tab active" type="button" data-region="ALL" aria-pressed="true">Tất cả</button>
+            <button class="tab" type="button" data-region="MB" aria-pressed="false">Miền Bắc</button>
+            <button class="tab" type="button" data-region="MT" aria-pressed="false">Miền Trung</button>
+            <button class="tab" type="button" data-region="MN" aria-pressed="false">Miền Nam</button>
+          </div>
+        </div>
+        <div id="results" class="result-grid" aria-live="polite"></div>
+      </section>
+
+      <section class="help-row" aria-label="Thông tin lịch quét">
+        <div class="mini-icon" aria-hidden="true">◷</div>
+        <div>
+          <strong>Tự quét khi ứng dụng đang chạy</strong>
+          <p>19:15, 20:00, 21:00 hằng ngày; 07:30 sáng hôm sau kiểm tra bù. Múi giờ Việt Nam (UTC+7).</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>© XSKT Local · Dữ liệu chỉ mang tính tham khảo.</span>
+      <span>Nguồn tổng hợp: <a href="https://doveso.submit69.com/" target="_blank" rel="noopener noreferrer">Dò Vé Xổ Số</a>. Vui lòng đối chiếu công bố của công ty XSKT.</span>
+    </footer>
+  </div>
+</body>
+</html>
