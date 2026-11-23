@@ -9,6 +9,7 @@ import { createCollector } from '../src/collector.js';
 import { createAppServer } from '../src/server.js';
 import { createScheduler } from '../src/scheduler.js';
 import { exportCsv, readDay, listHistory } from '../src/store.js';
+import { stationDetailsForDate } from '../src/station-schedule.js';
 
 const DAY='2026-11-23'; // Monday, 3 Southern stations
 const RULES={
@@ -180,6 +181,16 @@ test('API local trả kết quả miền Nam, thống kê, danh sách đài và 
     const day=await(await fetch(`${base}/api/day?date=${DAY}`)).json();
     assert.equal(day.region,'MN');
     assert.equal(day.results.some(x=>x.region==='MB'),false);
+    const status=await(await fetch(`${base}/api/status`)).json();
+    assert.equal(Array.isArray(status.today_stations),true);
+    assert.ok(status.today_stations.length===3 || status.today_stations.length===4);
+    assert.ok(status.today_stations.every(s=>typeof s.code==='string' && typeof s.name==='string' && s.name.length>0));
+    assert.deepEqual(stationDetailsForDate('2026-11-23'),[
+      {code:'ho-chi-minh',name:'TP. Hồ Chí Minh'},
+      {code:'dong-thap',name:'Đồng Tháp'},
+      {code:'ca-mau',name:'Cà Mau'}
+    ]);
+    assert.equal(stationDetailsForDate('2026-11-28').length,4);
     const stats=await(await fetch(`${base}/api/stats?from=${DAY}&to=${DAY}`)).json();
     assert.equal(stats.totals.numbers,54);
     const stations=await(await fetch(`${base}/api/stations`)).json();

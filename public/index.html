@@ -23,6 +23,16 @@
         <h1>Kết quả &amp; <span>thống kê XSMN</span></h1>
         <p>Thu thập dữ liệu theo đài, giải, ngày mở thưởng và thống kê hai số cuối trên lịch sử đã lưu.</p>
       </section>
+      <section class="today-schedule" aria-labelledby="todayScheduleTitle">
+        <div class="today-schedule-head">
+          <div>
+            <div class="eyebrow">LỊCH MỞ THƯỞNG HÔM NAY</div>
+            <h2 id="todayScheduleTitle">Hôm nay đài nào xổ?</h2>
+          </div>
+          <span class="today-schedule-meta" id="todayScheduleMeta">Đang tải lịch mở thưởng hôm nay...</span>
+        </div>
+        <div id="todayScheduleList" class="today-schedule-list" aria-live="polite"></div>
+      </section>
       <section class="toolbar" aria-label="Xem kết quả theo ngày">
         <div class="date-wrap">
           <label for="dateInput">Ngày mở thưởng</label>
@@ -160,15 +170,19 @@
         </div>
         <div class="section-top">
           <div>
-            <div class="eyebrow">THỬ NGHIỆM / GIẢI 8</div>
-            <h2 id="predictionTitle">Xếp hạng 00–99 bằng trọng số lịch sử</h2>
-            <p>Chỉ dùng giải 8 của từng đài miền Nam, không sử dụng kết quả từ ngày dự đoán trở đi.</p>
+            <div class="eyebrow">THỬ NGHIỆM / GIẢI 8 (V1 &amp; V2)</div>
+            <h2 id="predictionTitle">Xếp hạng 00–99 &amp; kiểm định đối chuẩn</h2>
+            <p>Chỉ dùng giải 8 của từng đài miền Nam trước ngày dự đoán; V2 kết hợp toàn lịch sử, suy giảm gần đây, biên đầu/đuôi 0–9 và làm mịn về phân bố đều.</p>
           </div>
         </div>
         <div class="prediction-controls">
+          <label>Mô hình<select id="predictionModel">
+            <option value="v2" selected>V2 — Đa thành phần + Đối chuẩn</option>
+            <option value="v1">V1 — Trọng số lịch sử cơ bản</option>
+          </select></label>
           <label>Ngày cần dự đoán<input type="date" id="predictionDate"></label>
           <label>Đài XSMN<select id="predictionStation"><option value="">Chọn đài</option></select></label>
-          <label>Số kỳ gần nhất<select id="predictionWindow">
+          <label>Cửa sổ gần đây<select id="predictionWindow">
             <option value="26">26 kỳ</option><option value="52" selected>52 kỳ</option>
             <option value="104">104 kỳ</option><option value="156">156 kỳ</option>
           </select></label>
@@ -176,11 +190,17 @@
             <option value="6">6 kỳ</option><option value="12" selected>12 kỳ</option>
             <option value="26">26 kỳ</option><option value="52">52 kỳ</option>
           </select></label>
-          <label>Ưu tiên gần đây<select id="predictionWeight">
+          <label id="v1WeightField" hidden>Ưu tiên gần đây (V1)<select id="predictionWeight">
             <option value="50">50% gần / 50% dài hạn</option>
             <option value="70" selected>70% gần / 30% dài hạn</option>
             <option value="90">90% gần / 10% dài hạn</option>
           </select></label>
+          <div id="v2WeightFields" class="v2-weight-grid">
+            <label>Gần đây (%)<input type="number" id="v2RecentWeight" min="0" max="100" value="35"></label>
+            <label>Toàn lịch sử (%)<input type="number" id="v2LongWeight" min="0" max="100" value="30"></label>
+            <label>Biên đầu/đuôi (%)<input type="number" id="v2DigitWeight" min="0" max="100" value="20"></label>
+            <label>Co về đều (%)<input type="number" id="v2UniformShrinkage" min="0" max="100" value="15"></label>
+          </div>
           <button type="button" class="btn primary" id="predictionBtn">Xếp hạng giải 8</button>
         </div>
         <div id="predictionMessage" class="analysis-note" role="status">

@@ -3,9 +3,11 @@ const LABELS={
   giaidb:'Đặc biệt',giai1:'Giải 1',giai2:'Giải 2',giai3:'Giải 3',giai4:'Giải 4',
   giai5:'Giải 5',giai6:'Giải 6',giai7:'Giải 7',giai8:'Giải 8'
 };
-let today='', report=null, collecting=false, rangeCollecting=false, analyzing=false;
+let today='', todayStations=[], report=null, collecting=false, rangeCollecting=false, analyzing=false;
+let todayResultCodes=new Set();
 let selectedStation='',stationHistoryBefore='9999-12-31';
 let distributionItems=[];
+let dailySkippedByCode=new Map();
 const nf=new Intl.NumberFormat('vi-VN');
 function el(tag,cls,text) {
   const e=document.createElement(tag);
@@ -33,12 +35,45 @@ async function api(path,options) {
   if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
   return body;
 }
+function renderTodaySchedule() {
+  const meta=$('todayScheduleMeta');
+  const list=$('todayScheduleList');
+  if(!meta||!list)return;
+  list.replaceChildren();
+  if(!todayStations.length) {
+    meta.textContent='Không có dữ liệu lịch mở thưởng hôm nay.';
+    return;
+  }
+  const doneCount=todayStations.filter(s=>todayResultCodes.has(s.code)).length;
+  meta.textContent=`${dateLabel(today)} · ${todayStations.length} đài XSMN · Mở thưởng 16:15 (giờ VN)${doneCount?` · Đã có KQ ${doneCount}/${todayStations.length} đài`:''}`;
+  for(const station of todayStations) {
+    const hasResult=todayResultCodes.has(station.code);
+    const chip=el('button',hasResult?'today-station-chip is-done':'today-station-chip');
+    chip.type='button';
+    chip.append(
+      el('span','today-station-dot'),
+      el('strong','today-station-name',station.name),
+      el('span','today-station-state',hasResult?'Đã có KQ':'Chờ xổ')
+    );
+    chip.title=`Xem lịch sử và chọn đài ${station.name}`;
+    chip.addEventListener('click',()=>{
+      const predSelect=$('predictionStation');
+      if(predSelect && [...predSelect.options].some(o=>o.value===station.code)) predSelect.value=station.code;
+      void loadStationHistory(station.code,true);
+    });
+    list.append(chip);
+  }
+}
 async function loadDay() {
   const day=$('dateInput').value;
   try {
     const data=await api(`/api/day?date=${encodeURIComponent(day)}`);
     if(day!==$('dateInput').value)return;
     report=data;
+    if(day===today) {
+      todayResultCodes=new Set((data.results||[]).map(r=>r.province));
+      renderTodaySchedule();
+    }
     renderResults();
   } catch(e) { notice(`Lỗi tải dữ liệu: ${e.message}`,'error'); }
 }
@@ -138,8 +173,12 @@ async function scan() {
   notice(`Đang lấy kết quả miền Nam ngày ${day}...`);
   try {
     const data=await api(`/api/collect?date=${encodeURIComponent(day)}`,{method:'POST'});
+    if(day===today){
+      todayResultCodes=new Set((data.results||[]).map(r=>r.province));
+      renderTodaySchedule();
+    }
     if(day===$('dateInput').value){report=data;renderResults();}
-    await Promise.all([loadStations(),analyze()]);
+    await Promise.all([loadStations(),analyze(),loadDailyPredictions({ensure:false})]);
   } catch(e) {notice(`Lỗi cập nhật: ${e.message}. Kết quả đã lưu không bị xóa.`,'error');}
   finally{collecting=false;$('collectBtn').disabled=false;$('collectBtn').textContent='↻ Quét XSMN';}
 }
@@ -181,7 +220,7 @@ async function scanRange() {
       if(day!==to && requested) await new Promise(resolve=>setTimeout(resolve,1200));
     }
     $('scanRangeProgress').textContent=`Hoàn tất ${processed}/${total} ngày · lưu ${saved} ngày (${stations} kết quả đài) · bỏ qua ${skipped} · lỗi ${errors}.`;
-    await Promise.all([loadDay(),loadStations(),analyze()]);
+    await Promise.all([loadDay(),loadStations(),analyze(),loadDailyPredictions({ensure:true})]);
   } finally {
     rangeCollecting=false;button.disabled=false;button.textContent='Quét khoảng ngày';$('collectBtn').disabled=false;
   }
@@ -305,6 +344,20 @@ async function analyze() {
     $('analysisNote').textContent=`Không thống kê được: ${e.message}`;
   } finally { analyzing=false;$('analyzeBtn').disabled=false; }
 }
+function syncPredictionModelUI() {
+  const isV2=$('predictionModel')?.value!=='v1';
+  if($('v1WeightField'))$('v1WeightField').hidden=isV2;
+  if($('v2WeightFields'))$('v2WeightFields').hidden=!isV2;
+}
+function formatCi(ci) {
+  if(!ci||ci.low==null||ci.high==null)return '—';
+  return `${ci.low}%–${ci.high}%`;
+}
+function formatSigned(value,suffix='',digits=2) {
+  if(value==null)return '—';
+  const sign=value>0?'+':'';
+  return `${sign}${Number(value).toFixed(digits)}${suffix}`;
+}
 async function predictPrize8() {
   const station=$('predictionStation').value;
   if(!station) {
@@ -316,28 +369,61 @@ async function predictPrize8() {
     $('predictionMessage').textContent='Hãy chọn ngày cần xếp hạng.';
     return;
   }
-  const button=$('predictionBtn');
-  button.disabled=true;button.textContent='Đang tính...';
-  $('predictionMessage').className='analysis-note';
-  $('predictionMessage').textContent='Đang đọc lịch sử giải 8 và chạy kiểm định từng kỳ...';
+  const model=$('predictionModel')?.value||'v2';
   const params=new URLSearchParams({
     date, province:station,
     window:$('predictionWindow').value,
     halfLife:$('predictionHalfLife').value,
-    recentWeight:$('predictionWeight').value,
     topK:'10'
   });
+  let endpoint='/api/prize8/predict';
+  if(model==='v2') {
+    const weights=['v2RecentWeight','v2LongWeight','v2DigitWeight','v2UniformShrinkage'].map(id=>Number($(id).value));
+    if(weights.some(x=>!Number.isFinite(x)||x<0||x>100)||Math.abs(weights.reduce((a,b)=>a+b,0)-100)>1e-6) {
+      $('predictionMessage').className='analysis-note error';
+      $('predictionMessage').textContent='Tổng bốn trọng số V2 (Gần đây, Toàn lịch sử, Biên đầu/đuôi, Co về đều) phải đúng bằng 100%.';
+      return;
+    }
+    endpoint='/api/prize8/v2/predict';
+    params.set('recentWeight',String(weights[0]));
+    params.set('longWeight',String(weights[1]));
+    params.set('digitWeight',String(weights[2]));
+    params.set('uniformShrinkage',String(weights[3]));
+  } else {
+    params.set('recentWeight',$('predictionWeight').value);
+  }
+  const button=$('predictionBtn');
+  button.disabled=true;button.textContent='Đang tính...';
+  $('predictionMessage').className='analysis-note';
+  $('predictionMessage').textContent='Đang đọc lịch sử giải 8 và chạy kiểm định từng kỳ...';
   try {
-    const response=await api(`/api/prize8/predict?${params}`);
-    const {forecast,backtest,name}=response;
+    const response=await api(`${endpoint}?${params}`);
+    const {forecast,backtest,name,coverage}=response;
     const top=$('predictionTop'),scores=forecast.top||[];
     top.replaceChildren();
     if(forecast.status==='insufficient_history') {
       const need=Math.max(0,20-forecast.windowUsed);
       $('predictionMessage').textContent=`Đài ${name} có ${forecast.windowUsed} kỳ giải 8 trước ${date}; cần thêm ít nhất ${need} kỳ để bắt đầu xếp hạng. Hãy nhập lịch sử.`;
       top.append(el('p','placeholder','Chưa đủ dữ liệu để xếp hạng có ý nghĩa.'));
+    } else if(model==='v2') {
+      $('predictionMessage').textContent=`${name} · V2 (${response.modelVersion}) · toàn lịch sử ${nf.format(forecast.historyCount)} kỳ (cửa sổ gần ${nf.format(forecast.windowUsed)} kỳ) · đến ${forecast.trainingEnd}.`;
+      scores.forEach((score,i)=>{
+        const row=el('div','rank-item');
+        const detail=el('div','rank-detail');
+        detail.append(
+          el('div','',`Gần: ${score.observed}/${forecast.windowUsed} · Toàn bộ: ${score.totalObserved}/${forecast.historyCount} · gần nhất ${score.lastSeen||'chưa có'}`),
+          el('div','rank-components',`Gần ${score.components.recent.toFixed(2)}% · Dài ${score.components.long.toFixed(2)}% · Đầu/đuôi ${score.components.digit.toFixed(2)}%`)
+        );
+        row.append(
+          el('span','rank-pos',`#${i+1}`),
+          el('strong','rank-number',score.number),
+          detail,
+          el('span','rank-score',score.score.toFixed(3))
+        );
+        top.append(row);
+      });
     } else {
-      $('predictionMessage').textContent=`${name} · ${nf.format(forecast.windowUsed)} kỳ được dùng · kỳ mới nhất trong dữ liệu: ${forecast.trainingEnd}. Trọng số gần đây: ${Math.round(100*forecast.params.recentWeight)}%.`;
+      $('predictionMessage').textContent=`${name} · V1 · ${nf.format(forecast.windowUsed)} kỳ được dùng · kỳ mới nhất trong dữ liệu: ${forecast.trainingEnd}. Trọng số gần đây: ${Math.round(100*forecast.params.recentWeight)}%.`;
       scores.forEach((score,i)=>{
         const row=el('div','rank-item');
         row.append(
@@ -350,8 +436,63 @@ async function predictPrize8() {
       });
     }
     const root=$('predictionBacktest');root.replaceChildren();
+    if(model==='v2' && coverage) {
+      const covBox=el('div','coverage-box');
+      covBox.append(
+        el('strong','',`Độ phủ lịch sử: ${coverage.coveragePercent}% (${nf.format(coverage.totalDraws)}/${nf.format(coverage.expectedDrawsInSpan)} kỳ)`),
+        el('span','',coverage.firstDate
+          ? `Giai đoạn ${coverage.firstDate} → ${coverage.lastDate} · ước thiếu ${coverage.missingDraws} kỳ · khoảng trống lớn nhất ${coverage.maxGapDays} ngày.`
+          : 'Chưa có kỳ giải 8 nào trước ngày mục tiêu.')
+      );
+      if(coverage.warning)covBox.append(el('div','coverage-warn',coverage.warning));
+      root.append(covBox);
+    }
     if(!backtest.evaluated) {
       root.append(el('p','placeholder','Chưa có đủ kỳ trước ngày dự đoán để kiểm định.'));
+    } else if(model==='v2' && backtest.models) {
+      root.append(el('p','panel-help',`Kiểm định cuốn chiếu ${backtest.evaluated} kỳ (${backtest.evaluationStart} → ${backtest.evaluationEnd}), luôn học từ các kỳ trước từng lần quay.`));
+      const grid=el('div','backtest-metrics');
+      for(const [label,item] of [['V2 Top 1',backtest.models.v2.top1],[`V2 Top ${backtest.models.v2.topK.k}`,backtest.models.v2.topK]]) {
+        const box=el('div','backtest-metric');
+        box.append(
+          el('span','',`${label}: ${item.hits}/${backtest.evaluated} kỳ`),
+          el('strong','',`${item.rate}%`),
+          el('span','',`CI 95%: ${formatCi(item.ci95)} · So ngẫu nhiên: ${formatSigned(item.liftPoints,' đ%')}`)
+        );
+        grid.append(box);
+      }
+      root.append(grid);
+      const scroll=el('div','table-scroll');
+      const table=el('table','benchmark-table');
+      const thead=el('thead'),hr=el('tr');
+      ['Mô hình','Top 1','Top 10 (CI 95%)','Log-loss','MRR'].forEach(h=>hr.append(el('th','',h)));
+      thead.append(hr);table.append(thead);
+      const tbody=el('tbody');
+      const rowsDef=[
+        ['V2 (Đa thành phần)',backtest.models.v2,'benchmark-v2'],
+        ['V1 (Trọng số gần)',backtest.models.v1,''],
+        ['Tần suất thô (Raw)',backtest.models.raw,''],
+        ['Ngẫu nhiên đều',backtest.models.uniform,'benchmark-uniform']
+      ];
+      for(const [label,m,cls] of rowsDef) {
+        const tr=el('tr',cls);
+        const top1Text=m.top1.hits==null?`${m.top1.rate}%`:`${m.top1.rate}% (${m.top1.hits})`;
+        const topKText=m.topK.hits==null?`${m.topK.rate}%`:`${m.topK.rate}% (${formatCi(m.topK.ci95)})`;
+        tr.append(
+          el('td','',label),
+          el('td','',top1Text),
+          el('td','',topKText),
+          el('td','',m.logLoss!=null?m.logLoss.toFixed(4):'—'),
+          el('td','',m.mrr!=null?m.mrr.toFixed(4):'—')
+        );
+        tbody.append(tr);
+      }
+      table.append(tbody);scroll.append(table);root.append(scroll);
+      const sig=backtest.comparison?.v2VsUniform?.isStatisticallySignificantTopK;
+      root.append(el('p','backtest-note',sig
+        ? 'Cận dưới CI 95% của V2 Top 10 vượt mốc 10% trên mẫu quá khứ; vẫn cần kiểm chứng ngoài mẫu trước khi rút kết luận.'
+        : 'Chênh lệch Top 10 của V2 chưa vượt mốc ngẫu nhiên 10% ở mức tin cậy 95% — phù hợp kỳ vọng của kỳ quay ngẫu nhiên.'));
+      root.append(el('p','backtest-warning',backtest.warning));
     } else {
       root.append(el('p','panel-help',`Đã kiểm định ${backtest.evaluated} kỳ, luôn học từ những kỳ trước từng lần quay.`));
       const grid=el('div','backtest-metrics');
@@ -371,10 +512,111 @@ async function predictPrize8() {
   } finally {button.disabled=false;button.textContent='Xếp hạng giải 8';}
 }
 
+function dailyStatusMeta(item) {
+  if(item.actual==null) return { text:'Chờ kết quả', cls:'daily-badge pending' };
+  if(item.top1Hit) return { text:'Trúng Top 1 · #1', cls:'daily-badge hit-top1' };
+  if(item.top10Hit) return { text:`Trúng Top 10 · #${item.actualRank}`, cls:'daily-badge hit-top10' };
+  return { text:'Ngoài Top 10', cls:'daily-badge miss' };
+}
+function renderDailyPredictions(data) {
+  const msg=$('dailyPredictionMessage');
+  const root=$('dailyPredictionCards');
+  if(!msg||!root)return;
+  root.replaceChildren();
+  if(Array.isArray(data.skipped)) {
+    dailySkippedByCode=new Map(data.skipped.map(s=>[s.province,s]));
+  }
+  const predictions=data.predictions||[];
+  const scheduled=data.scheduled||[];
+  const generatedCount=Array.isArray(data.generated)?data.generated.length:0;
+  const withActual=predictions.filter(p=>p.actual!=null);
+  const top1Hits=withActual.filter(p=>p.top1Hit).length;
+  const top10Hits=withActual.filter(p=>p.top10Hit).length;
+  const parts=[
+    `Ngày ${dateLabel(data.targetDate)}`,
+    `${predictions.length}/${scheduled.length} đài đã lưu Top 10`
+  ];
+  if(generatedCount) parts.push(`vừa tạo mới ${generatedCount} đài`);
+  if(withActual.length) parts.push(`đã đối chiếu ${withActual.length} đài (Top 1: ${top1Hits}, Top 10: ${top10Hits})`);
+  msg.textContent=`${parts.join(' · ')}. ${data.note||''}`.trim();
+
+  const byProvince=new Map(predictions.map(item=>[item.province,item]));
+  const orderedCodes=[...new Set([...scheduled,...predictions.map(p=>p.province)])];
+  if(!orderedCodes.length) {
+    root.append(el('p','placeholder','Không có đài mở thưởng theo lịch cho ngày này.'));
+    return;
+  }
+  for(const code of orderedCodes) {
+    const item=byProvince.get(code);
+    if(!item) {
+      const skipped=dailySkippedByCode.get(code);
+      const card=el('article','daily-card daily-card-muted');
+      const head=el('div','daily-card-head');
+      head.append(el('strong','',skipped?.name||code),el('span','daily-badge pending','Chưa đủ lịch sử'));
+      const reason=skipped?.reason==='insufficient_history'
+        ? `Mới có ${skipped.historyCount??0} kỳ Giải 8 trước ngày hôm nay (cần tối thiểu 20 kỳ để tạo Top 10).`
+        : 'Chưa có đủ lịch sử Giải 8 trong MySQL cho đài này.';
+      card.append(head,el('p','daily-empty-note',reason));
+      root.append(card);
+      continue;
+    }
+    const card=el('article','daily-card');
+    const head=el('div','daily-card-head');
+    const titleWrap=el('div','daily-card-title');
+    titleWrap.append(el('strong','',item.name));
+    if(item.modelVersion) titleWrap.append(el('small','',item.modelVersion));
+    const badge=dailyStatusMeta(item);
+    head.append(titleWrap,el('span',badge.cls,badge.text));
+    card.append(head);
+
+    const actualBar=el('div',item.actual!=null?'daily-actual has-actual':'daily-actual');
+    if(item.actual!=null) {
+      const rankLabel=item.actualRank?`Hạng #${item.actualRank}/10`:'Ngoài Top 10';
+      actualBar.append(
+        el('div','daily-actual-num',`Giải 8: ${item.actual}`),
+        el('div','daily-actual-meta',`${rankLabel} · Top 1: ${item.top1Hit?'Đạt':'Không'} · Top 10: ${item.top10Hit?'Đạt':'Không'}`)
+      );
+    } else {
+      actualBar.append(el('div','daily-actual-meta','Chưa có kết quả Giải 8 hôm nay — sẽ tự đối chiếu khi kết quả được quét.'));
+    }
+    card.append(actualBar);
+
+    const list=el('div','daily-top-list');
+    (item.top||[]).forEach(entry=>{
+      const isMatch=item.actual!=null && entry.number===item.actual;
+      const cell=el('div',isMatch?'daily-top-cell daily-top-hit':'daily-top-cell');
+      cell.append(
+        el('span','daily-top-rank',`#${entry.rank}`),
+        el('strong','daily-top-num',entry.number),
+        el('span','daily-top-score',Number(entry.score).toFixed(2))
+      );
+      list.append(cell);
+    });
+    card.append(list);
+
+    const foot=el('div','daily-card-foot',
+      `Học đến ${item.trainingCutoff} · Lưu cố định ${new Date(item.generatedAt).toLocaleString('vi-VN')}`);
+    card.append(foot);
+    root.append(card);
+  }
+}
+async function loadDailyPredictions({ensure=false}={}) {
+  const msg=$('dailyPredictionMessage');
+  if(!msg)return;
+  try {
+    const query=today?`?date=${encodeURIComponent(today)}`:'';
+    const data=await api(`/api/prize8/daily${query}`,ensure?{method:'POST'}:undefined);
+    renderDailyPredictions(data);
+  } catch(e) {
+    msg.textContent=`Không tải được dự đoán hằng ngày: ${e.message}`;
+  }
+}
 async function bootstrap() {
   try {
     const status=await api('/api/status');
     today=status.today;
+    todayStations=Array.isArray(status.today_stations)?status.today_stations:[];
+    renderTodaySchedule();
     $('dateInput').max=today;$('toDate').max=today;$('distributionDate').max=today;
     $('scanFromDate').max=today;$('scanToDate').max=today;
     $('dateInput').value=today;
@@ -382,7 +624,7 @@ async function bootstrap() {
     $('predictionDate').value=today;
     $('distributionDate').value=today;
     $('toDate').value=today;$('fromDate').value=relativeDay(today,-89);
-    await Promise.all([loadDay(),loadStations()]);
+    await Promise.all([loadDay(),loadStations(),loadDailyPredictions({ensure:true})]);
     await analyze();
   } catch(e) {notice(`Không kết nối được máy chủ: ${e.message}`,'error');}
 }
@@ -394,10 +636,17 @@ $('scanRangeBtn').addEventListener('click',scanRange);
 $('stationHistoryMore').addEventListener('click',()=>loadStationHistory(selectedStation,false));
 $('analyzeBtn').addEventListener('click',analyze);
 $('predictionBtn').addEventListener('click',predictPrize8);
+$('predictionModel')?.addEventListener('change',syncPredictionModelUI);
+syncPredictionModelUI();
 $('distributionBtn').addEventListener('click',analyzeDistribution);
 $('distributionParity').addEventListener('change',renderDistribution);
 $('csvBtn').addEventListener('click',()=>{
   if(report?.count)location.href=`/api/export.csv?date=${encodeURIComponent(report.date)}`;
 });
 void bootstrap();
-setInterval(()=>{if(!collecting && $('dateInput').value)void loadDay();},60_000);
+setInterval(()=>{
+  if(!collecting && $('dateInput').value) {
+    void loadDay();
+    void loadDailyPredictions({ensure:false});
+  }
+},60_000);

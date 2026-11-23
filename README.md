@@ -126,6 +126,9 @@ Lịch nằm trong Node.js, **không cần tạo cron mỗi ngày**. Máy phải
 | POST | `/api/collect?date=2026-11-22&overwrite=false` |
 | GET | `/api/export.csv?date=2026-11-22` |
 | GET | `/api/stats?from=2026-10-01&to=2026-11-22&province=dong-thap&prize=giaidb` |
+| GET | `/api/prize8/predict?date=2026-11-24&province=dong-thap` |
+| GET | `/api/prize8/v2/predict?date=2026-11-24&province=dong-thap&recentWeight=35&longWeight=30&digitWeight=20&uniformShrinkage=15` |
+| GET / POST | `/api/prize8/daily?date=2026-11-23` |
 | GET | `/api/prize8/distribution?date=2026-11-23&province=dong-thap&recent=40&long=25&weekday=25&parity=10` |
 
 Dashboard có mục **Quét dữ liệu theo khoảng ngày** (tối đa 10 năm/lần), hiển thị trực tiếp phần trăm, số ngày đã xử lý, số ngày/số đài đã lưu, số ngày bỏ qua và số lỗi. Trình duyệt gửi từng ngày riêng lẻ và giãn nhịp khi có gọi nguồn. Khi không chọn ghi đè, server kiểm tra MySQL trước và trả bản đã lưu mà không gọi nguồn. Khi chọn ghi đè, `overwrite=true` buộc tải lại, kiểm tra và cập nhật transaction của ngày đó. Lỗi một ngày không dừng các ngày còn lại.
@@ -187,11 +190,22 @@ npm run history:import -- 2026-01-01 2026-11-23
 
 Mỗi lệnh tối đa 366 ngày. Collector thử nguồn chính trước rồi dùng nguồn phụ cho ngày bị thiếu; ngày cả hai nguồn đều không có sẽ được báo lỗi và không làm mất dữ liệu đã lưu. Nếu chưa nhập lịch sử, ứng dụng **không tự tạo số dự đoán từ dữ liệu giả**.
 
-**Endpoint dự đoán thử nghiệm:**
+**Endpoint dự đoán thử nghiệm (V1 & V2):**
 
 ```http
+# V1 (mặc định, tương thích ngược)
 GET /api/prize8/predict?date=2026-11-24&province=dong-thap&window=52&halfLife=12&recentWeight=70&topK=10
+
+# V2 (đa thành phần + kiểm định đối chuẩn)
+GET /api/prize8/v2/predict?date=2026-11-24&province=dong-thap&window=52&halfLife=12&recentWeight=35&longWeight=30&digitWeight=20&uniformShrinkage=15&topK=10
 ```
+
+**Cải tiến ở phiên bản V2 (`v2.0.0`):**
+
+- Kết hợp 4 thành phần chuẩn hóa (tổng trọng số bằng `100%`, mặc định `35 / 30 / 20 / 15`): tần suất suy giảm gần đây trong cửa sổ `window`, tần suất trên **toàn bộ lịch sử** trước ngày dự đoán (không cắt bỏ kỳ cũ), **biên chữ số hàng chục × hàng đơn vị (`0–9`)** giúp giảm thưa dữ liệu và hạn chế thiên lệch hòa điểm `00–09`, cùng hệ số **co về phân bố đều (`1/100`)** giảm quá khớp.
+- **Kiểm định đối chuẩn 4 mô hình** trên cùng tập kỳ cuốn chiếu (`V2`, `V1`, `Tần suất thô`, `Ngẫu nhiên đều`), kèm khoảng tin cậy **Wilson 95% CI**, **Log-loss** (mốc đều `4.605`), **Brier score** (`0.99`) và **MRR** (`0.052`).
+- **Kiểm tra độ phủ lịch sử** theo lịch quay từng đài XSMN (ví dụ TP.HCM 2 kỳ/tuần, các đài khác 1 kỳ/tuần) để cảnh báo khi dữ liệu bị thiếu kỳ.
+- **Lưu dự đoán hằng ngày bất biến (idempotent):** khi mở dashboard, server tự xác định các đài mở thưởng hôm nay (`POST /api/prize8/daily`); đài nào chưa có Top 10 trong MySQL (và đủ tối thiểu 20 kỳ trước hôm nay) sẽ được tạo bằng V2 và lưu đúng một lần vào bảng `model_versions` và `predictions`; đài nào đã có sẽ chỉ đọc lại và **tuyệt đối không tạo lại hay sửa đổi**. Khi kết quả Giải 8 thật được thu thập, bảng tự đối chiếu và hiển thị số xổ, thứ hạng trong Top 10 và trạng thái Top 1 / Top 10.
 
 Màn hình **Tỷ trọng thống kê từng con số** hiển thị đủ `00..99` và bốn thành phần có trọng số: tần suất suy giảm gần đây, tần suất dài hạn, tần suất các kỳ cùng thứ với ngày mục tiêu, và tỷ lệ nhóm chẵn/lẻ. Mặc định là `40/25/25/10`; tổng bắt buộc bằng 100%. Bảng có thể lọc chẵn hoặc lẻ. Đây là tỷ trọng xếp hạng thống kê, không phải xác suất trúng đã hiệu chỉnh; mốc lý thuyết của mỗi số trong kỳ quay công bằng vẫn là 1%.
 

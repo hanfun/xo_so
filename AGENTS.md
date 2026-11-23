@@ -2,7 +2,7 @@
 
 > **Project:** [hanfun/xo_so](https://github.com/hanfun/xo_so)
 > **Last reviewed:** 2026-11-23
-> **Status:** V1 implemented, experimental weighted-frequency ranking (not a validated predictor)
+> **Status:** V1 & V2 (`v2.0.0`) implemented, experimental ranking & benchmarking platform (not a validated predictor)
 > **Primary language:** Vietnamese for UI and docs; JavaScript ES modules for code.
 
 ## 0. Read this first (instructions for coding agents)
@@ -189,6 +189,53 @@ sort descending by score, ascending by candidate number on ties
 return topK candidates and trainingEnd (latest training draw date)
 ```
 
+## 4b. V2 algorithm (`v2.0.0`) — multi-component regularized ranking & benchmark evaluation
+
+Implemented in `src/prize8-predictor.js` (`rankPrize8V2`, `backtestPrize8V2`, `analyzeHistoryCoverage`, `wilsonInterval`).
+
+### Parameters (`DEFAULT_V2_PARAMS`)
+
+| Parameter | Default | Valid range | Notes |
+|---|---:|---:|---|
+| `window` | 52 | Integer 20–200 | Trailing draws used for `P_recent` and V1 baseline comparison. |
+| `halfLife` | 12 | Number 2–100 | Exponential decay half-life (in draws) for `P_recent`. |
+| `recentWeight` | 0.35 | Number 0–1 | Weight for decayed recent frequency (`35%` in API). |
+| `longWeight` | 0.30 | Number 0–1 | Weight for full-history frequency across all draws `< targetDate` (`30%` in API). |
+| `digitWeight` | 0.20 | Number 0–1 | Weight for factorized tens × ones digit marginals (`20%` in API). |
+| `uniformShrinkage` | 0.15 | Number 0–1 | Explicit shrinkage weight toward uniform `1/100` (`15%` in API). |
+| `alpha` | 0.5 | Number (0, 10] | Additive smoothing for 100-bin frequency components. |
+| `alphaDigit` | 1 | Number (0, 10] | Additive smoothing for 10-bin tens/ones digit marginals. |
+| `topK` | 10 | Integer 1–20 | Displayed top-K candidates. |
+| `backtestDraws` | 80 | Integer 1–200 | Max recent walk-forward evaluation draws. |
+
+The four mixture weights must satisfy `recentWeight + longWeight + digitWeight + uniformShrinkage = 1` (within `1e-6`).
+
+### Formula
+
+Given all normalized draws `H` strictly before `targetDate` (length `M >= 20`) and trailing window `R` (length `N = min(M, window)`), for each candidate `s ∈ {00..99}` with tens digit `t = floor(s / 10)` and ones digit `u = s mod 10`:
+
+```text
+P_recent(s)  = (D_R(s) + alpha) / (W + 100*alpha)
+P_long(s)    = (C_H(s) + alpha) / (M + 100*alpha)
+P_digit(s)   = ((C_tens(t) + alphaDigit) / (M + 10*alphaDigit))
+             * ((C_ones(u) + alphaDigit) / (M + 10*alphaDigit))
+P_uniform(s) = 0.01
+
+Mix_V2(s) = recentWeight * P_recent(s)
+          + longWeight   * P_long(s)
+          + digitWeight  * P_digit(s)
+          + uniformShrinkage * 0.01
+```
+
+Each component is normalized to sum to `1` over `00..99`, so `Mix_V2` sums to `1` before rounding. Ranking sorts by unrounded `Mix_V2` descending, breaking ties by full-history `totalObserved` descending, `P_digit` descending, and finally ascending candidate string (`"00"`..`"99"`) — eliminating V1's low-number `"00..09"` tie bias among unseen candidates.
+
+### V2 walk-forward backtest & data coverage
+
+- `backtestPrize8V2` evaluates **four models on identical chronological walk-forward draws** (strictly training on rows `< i`): **V2**, **V1** (default `recentWeight=0.7`), **Raw full-history frequency** (no recency decay), and **Uniform random** (`Top-1 = 1%`, `Top-K = K%`, `LogLoss = ln(100) ≈ 4.60517`, `Brier = 0.99`, `MRR ≈ 0.05187`, `avgRank = 50.5`).
+- Reports **Wilson 95% confidence intervals** for Top-1 and Top-K hit rates, lift vs uniform, **Log-loss**, **multiclass Brier score**, **MRR**, and **average actual rank**.
+- Flags `isStatisticallySignificantTopK` only when `evaluated >= 30` and the lower 95% Wilson CI exceeds `topK%`.
+- `analyzeHistoryCoverage` checks station schedule cadence from `src/station-schedule.js` (e.g. `ho-chi-minh` 2×/week vs 1×/week stations) and reports `coveragePercent`, `missingDraws`, `maxGapDays`, and `gapCount`.
+
 ## 5. Walk-forward backtest — no future leakage
 
 Function: `backtestPrize8(history, targetDate, options)`.
@@ -232,7 +279,19 @@ GET /api/prize8/predict?date=2026-11-24&province=dong-thap&window=52&halfLife=12
 - `forecast.params.recentWeight` is the internal fraction (`0.7`), **not the API percentage** (`70`).
 - The endpoint currently computes in-memory on each request; it **does not write** to the `predictions` table.
 
-Frontend controls in `public/index.html` / `public/app.js` allow station, target date, training window, half-life and recency share. Display outputs include Top 10 with relative weighted scores and the backtest benchmarks. Frontend should continue to label these as **experimental ranking**, not odds or a guaranteed winning recommendation.
+### V1 & V2 REST endpoints
+
+- V1 (backward-compatible default):
+  `GET /api/prize8/predict?date=2026-11-24&province=dong-thap&window=52&halfLife=12&recentWeight=70&topK=10`
+- V2 (dedicated endpoint or via `version=v2`):
+  `GET /api/prize8/v2/predict?date=2026-11-24&province=dong-thap&window=52&halfLife=12&recentWeight=35&longWeight=30&digitWeight=20&uniformShrinkage=15&topK=10&backtestDraws=80`
+  (also accessible at `GET /api/prize8/predict?version=v2&...`).
+- V2 returns `modelVersion` (`"v2.0.0"`), `coverage`, `forecast`, `backtest` (with `models.{v2,v1,raw,uniform}` and `comparison`), and `notes`.
+- Idempotent daily Top-10 persistence (`model_versions` + `predictions`):
+  - `POST /api/prize8/daily` (called automatically when the dashboard opens for today): resolves scheduled stations via `stationsForDate(targetDate)`, generates V2 Top 10 strictly from draws `< targetDate` for any scheduled station not yet stored in `predictions`, persists once inside a locked (`FOR UPDATE`) idempotent transaction, and reads back any already-stored station without regenerating or modifying it.
+  - `GET /api/prize8/daily?date=YYYY-MM-DD`: read-only lookup returning saved daily predictions joined with actual `prize_results` (`giai8`, `position=1`), automatically computing `actual`, `actualRank`, `top1Hit`, `top10Hit`, and `status` (`pending`, `top1_hit`, `top10_hit`, `miss`) without altering stored prediction rows.
+
+Frontend controls in `public/index.html` / `public/app.js` allow choosing V2 (default) or V1, station, target date, training window, half-life, and model weights. Display outputs include Top 10 with relative weighted scores, coverage diagnostics, and the 4-model backtest benchmark table. Frontend continues to label these as **experimental ranking**, not odds or a guaranteed winning recommendation.
 
 An additional implemented experimental endpoint, `GET /api/prize8/distribution`, returns all `00..99` for one station and target date. It combines four normalized components whose percentage weights must sum to 100: decayed recent frequency, trailing-window frequency, frequency among observations on the same weekday as the target, and the observed even/odd group share distributed uniformly across the 50 values in that group. Defaults are `40/25/25/10`. It strictly uses rows before the target date and requires 20 observations. The result is a statistical allocation score, not a calibrated winning probability; the UI must retain the fair-draw 1% reference disclaimer.
 
@@ -288,13 +347,17 @@ For each proposed change:
 - [ ] Update this document and `README.md` whenever formulas, SQL schema, parameters, or API responses change.
 - [ ] Run `npm test` and verify CI; test against an actual MySQL instance only in a controlled development environment.
 
-### Suggested experiments (not implemented)
+### Implemented vs remaining V2 experiments
 
-- **V2-A: Baselines first:** compare uniform random, uniform prior (all candidates tied), raw trailing-frequency, and V1 weighted-frequency on identical chronological evaluation periods.
-- **V2-B: Sensitivity:** pre-register `window`, `halfLife`, and `recentWeight` grids; tune only on a prior period and measure the untouched future holdout.
-- **V2-C: Confidence and data quality:** bootstrapped uncertainty where appropriate, data coverage metrics, source revision audit, station-specific draw-schedule checks.
-- **V2-D: Persistence:** add immutable experiment runs and prediction snapshot records with training cutoff and algorithm version; **do not update outcome records or retroactively overwrite previously published predictions**.
-- **V2-E: Extra features** only after demonstrating additional out-of-sample value; do not introduce ML complexity or multiple-comparison cherry-picking without evaluation.
+- **Implemented in `v2.0.0` (synthetic/mocked tests passing, not yet validated on real MySQL history):**
+  - **V2-A (Baselines):** identical chronological walk-forward comparison of V2, V1, Raw full-history frequency, and Uniform random.
+  - **V2-C (Confidence & data quality):** Wilson 95% confidence intervals, Log-loss, Brier score, MRR, and station-schedule coverage/gap checks (`analyzeHistoryCoverage`).
+  - **V2 multi-component regularized scoring:** full-history frequency + decayed recent frequency + tens/ones digit marginals + uniform prior shrinkage.
+  - **V2-D (Daily immutable snapshots):** `POST /api/prize8/daily` and `GET /api/prize8/daily` persist V2 Top-10 snapshots once per `(province, target_date)` into `model_versions` and `predictions` with `FOR UPDATE` idempotency, never overwrite after results arrive, and live-evaluate `actual`, `actualRank`, `top1Hit`, and `top10Hit`.
+- **Still proposed (not implemented):**
+  - **V2-B (Sensitivity / Nested tuning):** pre-registered `window`, `halfLife`, and weight grids tuned strictly on a prior period and evaluated on an untouched holdout.
+  - **V2-D (Evaluation table materialization):** optional batch persistence into `prediction_evaluations` (currently evaluation is computed live from immutable `predictions` + `prize_results`).
+  - **V2-E (Extra features):** only after demonstrating additional out-of-sample value without multiple-comparison cherry-picking.
 
 ## 9. Definition of done
 

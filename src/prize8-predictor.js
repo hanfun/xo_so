@@ -1,19 +1,44 @@
+import { XSMN_WEEKLY_SCHEDULE } from './station-schedule.js';
+
 /**
  * Experimental, non-calibrated ranking of Southern lottery prize 8 (00..99).
  *
  * Input: individual province's prize-8 history; a draw contributes exactly
  * one two-digit string. Train only on dates < targetDate.
  *
- * Ranking = recentWeight * exponentially decayed smoothed frequency
- *         + (1 - recentWeight) * equally weighted smoothed frequency.
- * Smoothing adds alpha pseudo-count to each of the 100 possible values.
+ * V1 Ranking = recentWeight * exponentially decayed smoothed frequency
+ *            + (1 - recentWeight) * equally weighted smoothed frequency (in window).
+ * V2 Ranking = recentWeight * decayed frequency (in window)
+ *            + longWeight * full-history frequency (all draws < targetDate)
+ *            + digitWeight * factorized tens/ones marginal frequency (0-9 x 0-9)
+ *            + uniformShrinkage * (1 / 100).
  *
  * This is NOT a validated probability forecast: independent fair draws
  * cannot be reliably predicted from their past outcomes.
  */
 export const MIN_HISTORY = 20;
+export const V2_MODEL_VERSION = 'v2.0.0';
+export const UNIFORM_LOG_LOSS = Math.log(100);
+export const UNIFORM_BRIER = 0.99;
+export const UNIFORM_AVG_RANK = 50.5;
+export const UNIFORM_MRR = Array.from({ length: 100 }, (_, i) => 1 / (i + 1))
+  .reduce((a, b) => a + b, 0) / 100;
+
 export const DEFAULT_PARAMS = Object.freeze({
   window: 52, halfLife: 12, recentWeight: 0.7, alpha: 0.5, topK: 10,
+  backtestDraws: 80
+});
+
+export const DEFAULT_V2_PARAMS = Object.freeze({
+  window: 52,
+  halfLife: 12,
+  recentWeight: 0.35,
+  longWeight: 0.30,
+  digitWeight: 0.20,
+  uniformShrinkage: 0.15,
+  alpha: 0.5,
+  alphaDigit: 1,
+  topK: 10,
   backtestDraws: 80
 });
 
@@ -170,5 +195,460 @@ export function backtestPrize8(history, targetDate, options = {}) {
     warning:evaluated<30
       ? 'Mẫu kiểm định nhỏ: cần thu thập thêm lịch sử trước khi đánh giá.'
       : 'Kết quả kiểm định quá khứ không chứng minh khả năng dự đoán kỳ tiếp theo.'
+  };
+}
+
+export function validateV2Parameters(params = {}) {
+  const p = { ...DEFAULT_V2_PARAMS, ...params };
+  if (!Number.isInteger(p.window) || p.window < MIN_HISTORY || p.window > 200)
+    throw new Error('window phải nằm trong khoảng 20–200 kỳ');
+  if (!Number.isFinite(p.halfLife) || p.halfLife < 2 || p.halfLife > 100)
+    throw new Error('halfLife phải nằm trong khoảng 2–100 kỳ');
+  const weightKeys = ['recentWeight', 'longWeight', 'digitWeight', 'uniformShrinkage'];
+  for (const key of weightKeys) {
+    if (!Number.isFinite(p[key]) || p[key] < 0 || p[key] > 1)
+      throw new Error(`${key} phải nằm trong khoảng 0–1`);
+  }
+  const weightSum = p.recentWeight + p.longWeight + p.digitWeight + p.uniformShrinkage;
+  if (Math.abs(weightSum - 1) > 1e-6)
+    throw new Error('Tổng bốn trọng số V2 (recentWeight, longWeight, digitWeight, uniformShrinkage) phải bằng 1');
+  if (!Number.isFinite(p.alpha) || p.alpha <= 0 || p.alpha > 10)
+    throw new Error('alpha phải lớn hơn 0 và không quá 10');
+  if (!Number.isFinite(p.alphaDigit) || p.alphaDigit <= 0 || p.alphaDigit > 10)
+    throw new Error('alphaDigit phải lớn hơn 0 và không quá 10');
+  if (!Number.isInteger(p.topK) || p.topK < 1 || p.topK > 20)
+    throw new Error('topK phải nằm trong khoảng 1–20');
+  if (!Number.isInteger(p.backtestDraws) || p.backtestDraws < 1 || p.backtestDraws > 200)
+    throw new Error('backtestDraws phải nằm trong khoảng 1–200');
+  return p;
+}
+
+export function wilsonInterval(hits, total, z = 1.959963984540054) {
+  if (!Number.isInteger(total) || total <= 0) return { low: null, high: null };
+  const p = Math.min(1, Math.max(0, hits / total));
+  const z2 = z * z;
+  const denom = 1 + z2 / total;
+  const center = (p + z2 / (2 * total)) / denom;
+  const margin = (z * Math.sqrt((p * (1 - p)) / total + z2 / (4 * total * total))) / denom;
+  return {
+    low: Number((100 * Math.max(0, center - margin)).toFixed(2)),
+    high: Number((100 * Math.min(1, center + margin)).toFixed(2))
+  };
+}
+
+function stationWeekdays(province) {
+  if (!province) return [];
+  const days = [];
+  for (const [wd, list] of Object.entries(XSMN_WEEKLY_SCHEDULE)) {
+    if (list.includes(province)) days.push(Number(wd));
+  }
+  return days.sort((a, b) => a - b);
+}
+
+function countScheduledDays(startDay, endDay, weekdays) {
+  const startMs = Date.parse(`${startDay}T12:00:00Z`);
+  const endMs = Date.parse(`${endDay}T12:00:00Z`);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return 0;
+  const totalDays = Math.round((endMs - startMs) / 86400000) + 1;
+  if (!weekdays.length) return Math.max(1, Math.floor((totalDays - 1) / 7) + 1);
+  const fullWeeks = Math.floor(totalDays / 7);
+  const rem = totalDays % 7;
+  const startWd = new Date(startMs).getUTCDay();
+  let count = 0;
+  for (const wd of weekdays) {
+    const offset = (wd - startWd + 7) % 7;
+    count += fullWeeks + (offset < rem ? 1 : 0);
+  }
+  return count;
+}
+
+export function analyzeHistoryCoverage(history, targetDate, province = '') {
+  if (typeof targetDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate))
+    throw new Error('Ngày kiểm tra độ phủ không hợp lệ');
+  const past = normalizeHistory(history).filter(row => row.date < targetDate);
+  const weekdays = stationWeekdays(province);
+  if (!past.length) {
+    return {
+      totalDraws: 0,
+      firstDate: null,
+      lastDate: null,
+      expectedDrawsInSpan: 0,
+      missingDraws: 0,
+      coveragePercent: 0,
+      maxGapDays: 0,
+      gapCount: 0,
+      scheduleWeekdays: weekdays,
+      warning: 'Chưa có kỳ giải 8 nào trước ngày mục tiêu.'
+    };
+  }
+  const firstDate = past[0].date;
+  const lastDate = past.at(-1).date;
+  const expectedDrawsInSpan = Math.max(past.length, countScheduledDays(firstDate, lastDate, weekdays));
+  const missingDraws = Math.max(0, expectedDrawsInSpan - past.length);
+  const coveragePercent = Number((100 * past.length / expectedDrawsInSpan).toFixed(2));
+  const gapThreshold = weekdays.length >= 2 ? 5 : 8;
+  let maxGapDays = 0;
+  let gapCount = 0;
+  for (let i = 1; i < past.length; i++) {
+    const diffDays = Math.round(
+      (Date.parse(`${past[i].date}T12:00:00Z`) - Date.parse(`${past[i - 1].date}T12:00:00Z`)) / 86400000
+    );
+    if (diffDays > maxGapDays) maxGapDays = diffDays;
+    if (diffDays > gapThreshold) gapCount++;
+  }
+  let warning = null;
+  if (past.length < MIN_HISTORY) {
+    warning = `Mới có ${past.length} kỳ (cần tối thiểu ${MIN_HISTORY} kỳ để xếp hạng).`;
+  } else if (coveragePercent < 90) {
+    warning = `Độ phủ lịch sử ${coveragePercent}% (ước thiếu ${missingDraws} kỳ trong giai đoạn ${firstDate} – ${lastDate}).`;
+  } else if (past.length < 52) {
+    warning = `Mẫu lịch sử còn ít (${past.length} kỳ); nên thu thập thêm 2–3 năm để kiểm định ổn định hơn.`;
+  }
+  return {
+    totalDraws: past.length,
+    firstDate,
+    lastDate,
+    expectedDrawsInSpan,
+    missingDraws,
+    coveragePercent,
+    maxGapDays,
+    gapCount,
+    scheduleWeekdays: weekdays,
+    warning
+  };
+}
+
+function evaluateV2Core(allPast, params) {
+  if (allPast.length < MIN_HISTORY) return { items: [], probs: [] };
+  const p = params;
+  const recentRows = allPast.slice(-p.window);
+  const longCounts = new Array(100).fill(0);
+  const tensCounts = new Array(10).fill(0);
+  const onesCounts = new Array(10).fill(0);
+  const lastSeen = new Array(100).fill(null);
+  for (let i = 0; i < allPast.length; i++) {
+    const row = allPast[i];
+    const n = Number(row.number);
+    longCounts[n] += 1;
+    tensCounts[Math.floor(n / 10)] += 1;
+    onesCounts[n % 10] += 1;
+    lastSeen[n] = row.date;
+  }
+  const recentRaw = new Array(100).fill(0);
+  const decayed = new Array(100).fill(0);
+  let decaySum = 0;
+  for (let age = 0; age < recentRows.length; age++) {
+    const n = Number(recentRows[recentRows.length - 1 - age].number);
+    const weight = Math.pow(0.5, age / p.halfLife);
+    recentRaw[n] += 1;
+    decayed[n] += weight;
+    decaySum += weight;
+  }
+  const recentDen = decaySum + 100 * p.alpha;
+  const longDen = allPast.length + 100 * p.alpha;
+  const digitDen = allPast.length + 10 * p.alphaDigit;
+  const probs = new Array(100);
+  const scored = new Array(100);
+  for (let i = 0; i < 100; i++) {
+    const tens = Math.floor(i / 10);
+    const ones = i % 10;
+    const pRecent = (decayed[i] + p.alpha) / recentDen;
+    const pLong = (longCounts[i] + p.alpha) / longDen;
+    const pDigit = ((tensCounts[tens] + p.alphaDigit) / digitDen)
+      * ((onesCounts[ones] + p.alphaDigit) / digitDen);
+    const pUniform = 0.01;
+    const mix = p.recentWeight * pRecent
+      + p.longWeight * pLong
+      + p.digitWeight * pDigit
+      + p.uniformShrinkage * pUniform;
+    probs[i] = mix;
+    scored[i] = {
+      number: String(i).padStart(2, '0'),
+      score: Number((100 * mix).toFixed(5)),
+      observed: recentRaw[i],
+      totalObserved: longCounts[i],
+      weightedCount: Number(decayed[i].toFixed(4)),
+      lastSeen: lastSeen[i],
+      components: {
+        recent: Number((100 * pRecent).toFixed(5)),
+        long: Number((100 * pLong).toFixed(5)),
+        digit: Number((100 * pDigit).toFixed(5)),
+        uniform: 1
+      },
+      _mix: mix,
+      _digit: pDigit
+    };
+  }
+  scored.sort((a, b) =>
+    (b._mix - a._mix)
+    || (b.totalObserved - a.totalObserved)
+    || (b._digit - a._digit)
+    || a.number.localeCompare(b.number)
+  );
+  const items = scored.map(({ _mix, _digit, ...rest }) => rest);
+  return { items, probs };
+}
+
+function evaluateV1Core(windowRows, params) {
+  if (windowRows.length < MIN_HISTORY) return { items: [], probs: [] };
+  const raw = new Array(100).fill(0);
+  const decayed = new Array(100).fill(0);
+  let recentSum = 0;
+  for (let i = 0; i < windowRows.length; i++) {
+    const n = Number(windowRows[windowRows.length - 1 - i].number);
+    const weight = Math.pow(0.5, i / params.halfLife);
+    raw[n] += 1;
+    decayed[n] += weight;
+    recentSum += weight;
+  }
+  const longDenom = windowRows.length + 100 * params.alpha;
+  const recentDenom = recentSum + 100 * params.alpha;
+  const probs = new Array(100);
+  const items = new Array(100);
+  for (let i = 0; i < 100; i++) {
+    const prob = params.recentWeight * ((decayed[i] + params.alpha) / recentDenom)
+      + (1 - params.recentWeight) * ((raw[i] + params.alpha) / longDenom);
+    probs[i] = prob;
+    items[i] = {
+      number: String(i).padStart(2, '0'),
+      score: Number((100 * prob).toFixed(5))
+    };
+  }
+  items.sort((a, b) => b.score - a.score || a.number.localeCompare(b.number));
+  return { items, probs };
+}
+
+function evaluateRawCore(allPast, alpha) {
+  if (allPast.length < MIN_HISTORY) return { items: [], probs: [] };
+  const counts = new Array(100).fill(0);
+  for (let i = 0; i < allPast.length; i++) counts[Number(allPast[i].number)] += 1;
+  const denom = allPast.length + 100 * alpha;
+  const probs = new Array(100);
+  const items = new Array(100);
+  for (let i = 0; i < 100; i++) {
+    const prob = (counts[i] + alpha) / denom;
+    probs[i] = prob;
+    items[i] = {
+      number: String(i).padStart(2, '0'),
+      score: Number((100 * prob).toFixed(5)),
+      _prob: prob
+    };
+  }
+  items.sort((a, b) => (b._prob - a._prob) || a.number.localeCompare(b.number));
+  return { items, probs };
+}
+
+export function rankPrize8V2(history, targetDate, options = {}) {
+  const params = validateV2Parameters(options);
+  if (typeof targetDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate))
+    throw new Error('Ngày dự đoán không hợp lệ');
+  const past = normalizeHistory(history).filter(row => row.date < targetDate);
+  const windowUsed = Math.min(past.length, params.window);
+  if (past.length < MIN_HISTORY) {
+    return {
+      modelVersion: V2_MODEL_VERSION,
+      targetDate,
+      status: 'insufficient_history',
+      historyCount: past.length,
+      windowUsed,
+      trainingStart: past[0]?.date || null,
+      trainingEnd: past.at(-1)?.date || null,
+      top: [],
+      params: {
+        window: params.window,
+        halfLife: params.halfLife,
+        recentWeight: params.recentWeight,
+        longWeight: params.longWeight,
+        digitWeight: params.digitWeight,
+        uniformShrinkage: params.uniformShrinkage,
+        alpha: params.alpha,
+        alphaDigit: params.alphaDigit,
+        topK: params.topK
+      },
+      disclaimer: 'Điểm xếp hạng V2 là chỉ số thống kê thử nghiệm, KHÔNG phải xác suất trúng đã kiểm định. Mỗi số 00–99 có xác suất lý thuyết 1% trong kỳ quay công bằng.'
+    };
+  }
+  const { items } = evaluateV2Core(past, params);
+  return {
+    modelVersion: V2_MODEL_VERSION,
+    targetDate,
+    status: 'experimental',
+    historyCount: past.length,
+    windowUsed,
+    trainingStart: past[0].date,
+    trainingEnd: past.at(-1).date,
+    top: items.slice(0, params.topK),
+    params: {
+      window: params.window,
+      halfLife: params.halfLife,
+      recentWeight: params.recentWeight,
+      longWeight: params.longWeight,
+      digitWeight: params.digitWeight,
+      uniformShrinkage: params.uniformShrinkage,
+      alpha: params.alpha,
+      alphaDigit: params.alphaDigit,
+      topK: params.topK
+    },
+    disclaimer: 'Điểm xếp hạng V2 là chỉ số thống kê thử nghiệm, KHÔNG phải xác suất trúng đã kiểm định. Mỗi số 00–99 có xác suất lý thuyết 1% trong kỳ quay công bằng.'
+  };
+}
+
+function createAccumulator() {
+  return { top1Hits: 0, topKHits: 0, logLossSum: 0, brierSum: 0, rrSum: 0, rankSum: 0 };
+}
+
+function recordEvaluation(acc, result, targetNumber, topK) {
+  const targetIdx = Number(targetNumber);
+  const pTarget = Math.max(result.probs[targetIdx] ?? 1e-12, 1e-12);
+  let sumSq = 0;
+  for (let s = 0; s < 100; s++) sumSq += result.probs[s] * result.probs[s];
+  acc.logLossSum += -Math.log(pTarget);
+  acc.brierSum += sumSq - 2 * pTarget + 1;
+  const rank = result.items.findIndex(x => x.number === targetNumber) + 1;
+  if (rank === 1) acc.top1Hits += 1;
+  if (rank >= 1 && rank <= topK) acc.topKHits += 1;
+  if (rank >= 1) {
+    acc.rrSum += 1 / rank;
+    acc.rankSum += rank;
+  }
+}
+
+function summarizeAccumulator(acc, evaluated, topK) {
+  if (!evaluated) {
+    return {
+      top1: {
+        hits: 0, rate: null, ci95: { low: null, high: null },
+        randomBaselinePercent: 1, liftPoints: null, liftRatio: null
+      },
+      topK: {
+        k: topK, hits: 0, rate: null, ci95: { low: null, high: null },
+        randomBaselinePercent: topK, liftPoints: null, liftRatio: null
+      },
+      logLoss: null,
+      logLossVsUniform: null,
+      brierScore: null,
+      brierVsUniform: null,
+      mrr: null,
+      avgRank: null
+    };
+  }
+  const top1Rate = Number((100 * acc.top1Hits / evaluated).toFixed(2));
+  const topKRate = Number((100 * acc.topKHits / evaluated).toFixed(2));
+  const logLoss = Number((acc.logLossSum / evaluated).toFixed(5));
+  const brierScore = Number((acc.brierSum / evaluated).toFixed(5));
+  const mrr = Number((acc.rrSum / evaluated).toFixed(5));
+  const avgRank = Number((acc.rankSum / evaluated).toFixed(2));
+  return {
+    top1: {
+      hits: acc.top1Hits,
+      rate: top1Rate,
+      ci95: wilsonInterval(acc.top1Hits, evaluated),
+      randomBaselinePercent: 1,
+      liftPoints: Number((top1Rate - 1).toFixed(2)),
+      liftRatio: Number((top1Rate / 1).toFixed(3))
+    },
+    topK: {
+      k: topK,
+      hits: acc.topKHits,
+      rate: topKRate,
+      ci95: wilsonInterval(acc.topKHits, evaluated),
+      randomBaselinePercent: topK,
+      liftPoints: Number((topKRate - topK).toFixed(2)),
+      liftRatio: Number((topKRate / topK).toFixed(3))
+    },
+    logLoss,
+    logLossVsUniform: Number((UNIFORM_LOG_LOSS - logLoss).toFixed(5)),
+    brierScore,
+    brierVsUniform: Number((UNIFORM_BRIER - brierScore).toFixed(5)),
+    mrr,
+    avgRank
+  };
+}
+
+/**
+ * Strict forward-chain V2 backtest comparing V2, V1, Raw full-history frequency,
+ * and theoretical Uniform random baselines on the exact same chronological draws.
+ */
+export function backtestPrize8V2(history, targetDate, options = {}) {
+  const p = validateV2Parameters(options);
+  if (typeof targetDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate))
+    throw new Error('Ngày kiểm định không hợp lệ');
+  const rows = normalizeHistory(history).filter(r => r.date < targetDate);
+  const start = Math.max(MIN_HISTORY, rows.length - p.backtestDraws);
+  const v1Params = {
+    window: p.window,
+    halfLife: p.halfLife,
+    recentWeight: DEFAULT_PARAMS.recentWeight,
+    alpha: p.alpha,
+    topK: p.topK
+  };
+  const accV2 = createAccumulator();
+  const accV1 = createAccumulator();
+  const accRaw = createAccumulator();
+  let evaluated = 0;
+  for (let i = start; i < rows.length; i++) {
+    const train = rows.slice(0, i);
+    const target = rows[i].number;
+    recordEvaluation(accV2, evaluateV2Core(train, p), target, p.topK);
+    recordEvaluation(accV1, evaluateV1Core(train.slice(-v1Params.window), v1Params), target, p.topK);
+    recordEvaluation(accRaw, evaluateRawCore(train, p.alpha), target, p.topK);
+    evaluated += 1;
+  }
+  const v2 = summarizeAccumulator(accV2, evaluated, p.topK);
+  const v1 = summarizeAccumulator(accV1, evaluated, p.topK);
+  const raw = summarizeAccumulator(accRaw, evaluated, p.topK);
+  const uniform = {
+    top1: {
+      hits: null, rate: 1, ci95: { low: 1, high: 1 },
+      randomBaselinePercent: 1, liftPoints: 0, liftRatio: 1
+    },
+    topK: {
+      k: p.topK, hits: null, rate: p.topK, ci95: { low: p.topK, high: p.topK },
+      randomBaselinePercent: p.topK, liftPoints: 0, liftRatio: 1
+    },
+    logLoss: Number(UNIFORM_LOG_LOSS.toFixed(5)),
+    logLossVsUniform: 0,
+    brierScore: UNIFORM_BRIER,
+    brierVsUniform: 0,
+    mrr: Number(UNIFORM_MRR.toFixed(5)),
+    avgRank: UNIFORM_AVG_RANK
+  };
+  const diff = (a, b, digits = 2) =>
+    (a == null || b == null) ? null : Number((a - b).toFixed(digits));
+  const comparison = {
+    v2VsUniform: {
+      top1LiftPoints: v2.top1.liftPoints,
+      topKLiftPoints: v2.topK.liftPoints,
+      logLossImprovement: v2.logLossVsUniform,
+      brierImprovement: v2.brierVsUniform,
+      isStatisticallySignificantTopK: Boolean(
+        evaluated >= 30 && v2.topK.ci95.low != null && v2.topK.ci95.low > p.topK
+      )
+    },
+    v2VsV1: {
+      top1DiffPoints: diff(v2.top1.rate, v1.top1.rate, 2),
+      topKDiffPoints: diff(v2.topK.rate, v1.topK.rate, 2),
+      logLossImprovement: diff(v1.logLoss, v2.logLoss, 5),
+      mrrDiff: diff(v2.mrr, v1.mrr, 5)
+    },
+    v2VsRaw: {
+      top1DiffPoints: diff(v2.top1.rate, raw.top1.rate, 2),
+      topKDiffPoints: diff(v2.topK.rate, raw.topK.rate, 2),
+      logLossImprovement: diff(raw.logLoss, v2.logLoss, 5),
+      mrrDiff: diff(v2.mrr, raw.mrr, 5)
+    }
+  };
+  return {
+    modelVersion: V2_MODEL_VERSION,
+    evaluated,
+    evaluationStart: evaluated ? rows[start].date : null,
+    evaluationEnd: evaluated ? rows.at(-1).date : null,
+    top1: v2.top1,
+    topK: v2.topK,
+    models: { v2, v1, raw, uniform },
+    comparison,
+    warning: evaluated < 30
+      ? 'Mẫu kiểm định nhỏ (< 30 kỳ): dao động ngẫu nhiên lớn, chưa đủ cơ sở kết luận.'
+      : 'Kết quả kiểm định quá khứ (kể cả khi cao hơn mốc ngẫu nhiên) không chứng minh lợi thế ở kỳ quay công bằng tiếp theo.'
   };
 }

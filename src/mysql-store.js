@@ -143,50 +143,109 @@ export function createMysqlStore({ pool }) {
     }
     return [...grouped.values()];
   }
-  async function savePrize8Predictions({province,targetDate,trainingCutoff,items,modelVersion,parameters}) {
+  async function savePrize8Predictions({
+    province,
+    targetDate,
+    trainingCutoff,
+    items,
+    modelKey = 'prize8-v2-daily',
+    modelVersion,
+    description = 'Xếp hạng Giải 8 tự động theo ngày',
+    parameters
+  }) {
     if(!validDay(targetDate)||!validDay(trainingCutoff)||trainingCutoff>=targetDate)
       throw new Error('Mốc huấn luyện dự đoán không hợp lệ');
     if(!Array.isArray(items)||!items.length)throw new Error('Không có số dự đoán để lưu');
+    if(items.some(item=>typeof item?.number!=='string'||!/^\d{2}$/.test(item.number)))
+      throw new Error('Số dự đoán giải 8 phải là chuỗi hai chữ số');
     const conn=await pool.getConnection();
     try {
       await conn.beginTransaction();
+      // Lock the station row to serialize concurrent daily-prediction requests for the same station.
+      const [provinces]=await conn.execute(
+        "SELECT id FROM provinces WHERE region='MN' AND code=? LIMIT 1 FOR UPDATE",
+        [province]
+      );
+      if(!provinces.length)throw new Error(`Chưa có dữ liệu đài ${province}`);
+      const provinceId=provinces[0].id;
+      // Strictly idempotent & immutable: never regenerate or overwrite once saved for (province, target_date).
+      const [existing]=await conn.execute(
+        `SELECT COUNT(*) AS existing_count FROM predictions
+         WHERE province_id=? AND target_date=? AND prediction_type='prize8_top10'`,
+        [provinceId,targetDate]
+      );
+      if(Number(existing[0]?.existing_count||0)>0) {
+        await conn.commit();
+        return { created:false, reason:'already_exists' };
+      }
       const [models]=await conn.execute(`INSERT INTO model_versions
         (model_key,version,description,parameters_json) VALUES (?,?,?,?)
-        ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id),parameters_json=VALUES(parameters_json)`,
-        ['prize8-weighted-daily',modelVersion,'Xếp hạng Giải 8 tự động theo ngày',JSON.stringify(parameters)]);
-      const [provinces]=await conn.execute("SELECT id FROM provinces WHERE region='MN' AND code=? LIMIT 1",[province]);
-      if(!provinces.length)throw new Error(`Chưa có dữ liệu đài ${province}`);
+        ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)`,
+        [modelKey,modelVersion,description,JSON.stringify(parameters)]);
       for(const [index,item] of items.entries()) {
         await conn.execute(`INSERT IGNORE INTO predictions
           (model_version_id,province_id,target_date,prediction_type,predicted_value,confidence,training_cutoff,metadata_json)
-          VALUES (?,?,?,?,?,NULL,?,?)`,[models.insertId,provinces[0].id,targetDate,'prize8_top10',item.number,
-          trainingCutoff,JSON.stringify({rank:index+1,score:item.score,observed:item.observed,lastSeen:item.lastSeen})]);
+          VALUES (?,?,?,?,?,NULL,?,?)`,[models.insertId,provinceId,targetDate,'prize8_top10',item.number,
+          trainingCutoff,JSON.stringify({
+            rank:index+1,
+            score:item.score,
+            observed:item.observed ?? null,
+            totalObserved:item.totalObserved ?? null,
+            lastSeen:item.lastSeen ?? null
+          })]);
       }
       await conn.commit();
+      return { created:true, count:items.length };
     } catch(e) {try{await conn.rollback();}catch{}throw e;}
     finally{conn.release();}
   }
   async function getDailyPredictions(targetDate) {
     if(!validDay(targetDate))throw new Error('Ngày dự đoán không hợp lệ');
     const [rows]=await pool.execute(`SELECT p.code AS province,p.name,pred.predicted_value,
-      pred.training_cutoff,pred.generated_at,pred.metadata_json,actual.number AS actual
-      FROM predictions pred JOIN provinces p ON p.id=pred.province_id
+      DATE_FORMAT(pred.training_cutoff,'%Y-%m-%d') AS training_cutoff,
+      pred.generated_at,pred.metadata_json,
+      mv.model_key,mv.version AS model_version,
+      actual.number AS actual
+      FROM predictions pred
+      JOIN provinces p ON p.id=pred.province_id
+      LEFT JOIN model_versions mv ON mv.id=pred.model_version_id
       LEFT JOIN draws d ON d.province_id=p.id AND d.draw_date=pred.target_date
       LEFT JOIN prize_results actual ON actual.draw_id=d.id AND actual.prize_code='giai8' AND actual.position=1
       WHERE p.region='MN' AND pred.target_date=? AND pred.prediction_type='prize8_top10'
-      ORDER BY p.name,CAST(JSON_UNQUOTE(JSON_EXTRACT(pred.metadata_json,'$.rank')) AS UNSIGNED)`,[targetDate]);
+      ORDER BY p.name,CAST(JSON_UNQUOTE(JSON_EXTRACT(pred.metadata_json,'$.rank')) AS UNSIGNED),pred.id`,[targetDate]);
     const grouped=new Map();
     for(const row of rows) {
-      const metadata=typeof row.metadata_json==='string'?JSON.parse(row.metadata_json):row.metadata_json;
-      if(!grouped.has(row.province))grouped.set(row.province,{province:String(row.province),name:String(row.name),
-        targetDate,trainingCutoff:String(row.training_cutoff),generatedAt:new Date(row.generated_at).toISOString(),
-        actual:row.actual==null?null:String(row.actual),top:[]});
-      grouped.get(row.province).top.push({number:String(row.predicted_value),rank:Number(metadata.rank),score:Number(metadata.score)});
+      const metadata=typeof row.metadata_json==='string'?JSON.parse(row.metadata_json):(row.metadata_json||{});
+      const cutoff=row.training_cutoff instanceof Date
+        ? row.training_cutoff.toISOString().slice(0,10)
+        : String(row.training_cutoff);
+      if(!grouped.has(row.province))grouped.set(row.province,{
+        province:String(row.province),
+        name:String(row.name),
+        targetDate,
+        trainingCutoff:cutoff,
+        generatedAt:new Date(row.generated_at).toISOString(),
+        modelKey:row.model_key?String(row.model_key):null,
+        modelVersion:row.model_version?String(row.model_version):null,
+        actual:row.actual==null?null:String(row.actual),
+        top:[]
+      });
+      grouped.get(row.province).top.push({
+        number:String(row.predicted_value),
+        rank:Number(metadata.rank ?? (grouped.get(row.province).top.length+1)),
+        score:Number(metadata.score ?? 0),
+        observed:metadata.observed ?? null,
+        totalObserved:metadata.totalObserved ?? null,
+        lastSeen:metadata.lastSeen ?? null
+      });
     }
-    return [...grouped.values()].map(group=>({...group,
-      actualRank:group.actual?group.top.find(x=>x.number===group.actual)?.rank||null:null,
-      top1Hit:group.actual?group.top[0]?.number===group.actual:null,
-      top10Hit:group.actual?group.top.some(x=>x.number===group.actual):null}));
+    return [...grouped.values()].map(group=>{
+      const actualRank=group.actual?(group.top.find(x=>x.number===group.actual)?.rank??null):null;
+      const top1Hit=group.actual?group.top[0]?.number===group.actual:null;
+      const top10Hit=group.actual?group.top.some(x=>x.number===group.actual):null;
+      const status=group.actual==null?'pending':(top1Hit?'top1_hit':(top10Hit?'top10_hit':'miss'));
+      return { ...group, actualRank, top1Hit, top10Hit, status };
+    });
   }
   return { readDay,listHistory,listStations,writeDay,getStats,getPrize8History,getStationHistory,
     savePrize8Predictions,getDailyPredictions,close:()=>pool.end() };

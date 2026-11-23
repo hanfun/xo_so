@@ -5,8 +5,12 @@ import { DATA_DIR, PUBLIC_DIR, validDay, vnClock } from './config.js';
 import { exportCsv, listHistory as fileHistory, readDay as fileRead } from './store.js';
 import { PRIZE_NAMES } from './lottery.js';
 import { SLOTS } from './scheduler.js';
-import { rankPrize8, backtestPrize8, validateParameters, analyzePrize8Distribution } from './prize8-predictor.js';
-import { stationsForDate, XSMN_SCHEDULE_VERSION } from './station-schedule.js';
+import {
+  rankPrize8, backtestPrize8, validateParameters, analyzePrize8Distribution,
+  rankPrize8V2, backtestPrize8V2, validateV2Parameters, analyzeHistoryCoverage,
+  V2_MODEL_VERSION, DEFAULT_V2_PARAMS
+} from './prize8-predictor.js';
+import { stationsForDate, stationDetailsForDate, stationDisplayName, XSMN_SCHEDULE_VERSION } from './station-schedule.js';
 
 const STATIC={
   '/':['index.html','text/html; charset=utf-8'],
@@ -33,43 +37,96 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
     listStations:async()=>[],
     getStats:async()=>{throw new Error('Chức năng phân tích cần cấu hình MySQL');}
   };
+  const dailyLocks = new Map();
+  async function withDailyLock(targetDate, task) {
+    const previous = dailyLocks.get(targetDate) || Promise.resolve();
+    const current = previous.catch(() => {}).then(task);
+    dailyLocks.set(targetDate, current);
+    try { return await current; }
+    finally { if (dailyLocks.get(targetDate) === current) dailyLocks.delete(targetDate); }
+  }
   return createHttpServer(async(req,res)=>{
     try {
       const url=new URL(req.url,'http://localhost');
       const day=url.searchParams.get('date') || vnClock().day;
-      if(url.pathname==='/api/status' && req.method==='GET') return json(res,200,{
-        now:new Date().toISOString(),today:vnClock().day,
-        regions:['MN'],prize_names:PRIZE_NAMES,schedule:SLOTS,
-        timezone:'Asia/Ho_Chi_Minh',database:store?'mysql':'json-test'
-      });
+      if(url.pathname==='/api/status' && req.method==='GET') {
+        const todayDay=vnClock().day;
+        return json(res,200,{
+          now:new Date().toISOString(),today:todayDay,
+          today_stations:stationDetailsForDate(todayDay),
+          regions:['MN'],prize_names:PRIZE_NAMES,schedule:SLOTS,
+          timezone:'Asia/Ho_Chi_Minh',database:store?'mysql':'json-test'
+        });
+      }
       if(url.pathname==='/api/history' && req.method==='GET')
         return json(res,200,{dates:await db.listHistory()});
       if(url.pathname==='/api/stations' && req.method==='GET')
         return json(res,200,{stations:await db.listStations()});
+      if(url.pathname==='/api/prize8/daily' && req.method==='GET') {
+        const targetDate=url.searchParams.get('date')||vnClock().day;
+        if(!validDay(targetDate))return json(res,400,{error:'Ngày dự đoán không hợp lệ'});
+        if(typeof db.getDailyPredictions!=='function')
+          return json(res,503,{error:'Cần MySQL để đọc dự đoán hằng ngày'});
+        try {
+          const scheduled=stationsForDate(targetDate);
+          const predictions=await db.getDailyPredictions(targetDate);
+          return json(res,200,{
+            targetDate,
+            scheduled,
+            predictions,
+            note:'Dự đoán đã lưu không được tạo lại hoặc sửa sau khi có kết quả.'
+          });
+        } catch(e) {return json(res,500,{error:e.message});}
+      }
       if(url.pathname==='/api/prize8/daily' && req.method==='POST') {
         const targetDate=url.searchParams.get('date')||vnClock().day;
         if(!validDay(targetDate)||targetDate>vnClock().day)return json(res,400,{error:'Ngày dự đoán không hợp lệ'});
         if(typeof db.getDailyPredictions!=='function'||typeof db.savePrize8Predictions!=='function')
           return json(res,503,{error:'Cần MySQL để lưu dự đoán hằng ngày'});
         try {
-          const scheduled=stationsForDate(targetDate),existing=await db.getDailyPredictions(targetDate);
-          const completed=new Set(existing.map(x=>x.province));
-          const available=new Set((await db.listStations()).map(x=>x.code));
-          const generated=[],skipped=[];
-          for(const province of scheduled) {
-            if(completed.has(province)){skipped.push({province,reason:'already_exists'});continue;}
-            if(!available.has(province)){skipped.push({province,reason:'no_history'});continue;}
-            const history=await db.getPrize8History({province,before:targetDate,limit:500});
-            const forecast=rankPrize8(history,targetDate,{window:52,halfLife:12,recentWeight:.7,alpha:.5,topK:10,backtestDraws:80});
-            if(forecast.status!=='experimental'||!forecast.trainingEnd) {
-              skipped.push({province,reason:'insufficient_history'});continue;
+          const payload = await withDailyLock(targetDate, async () => {
+            const scheduled=stationsForDate(targetDate);
+            const existing=await db.getDailyPredictions(targetDate);
+            const completed=new Set(existing.map(x=>x.province));
+            const stationsList=await db.listStations();
+            const stationNames=new Map(stationsList.map(x=>[x.code,x.name]));
+            const generated=[],skipped=[];
+            for(const province of scheduled) {
+              const name=stationNames.get(province)||stationDisplayName(province);
+              if(completed.has(province)){skipped.push({province,name,reason:'already_exists'});continue;}
+              if(!stationNames.has(province)){skipped.push({province,name,reason:'no_history'});continue;}
+              const history=await db.getPrize8History({province,before:targetDate,limit:500});
+              const forecast=rankPrize8V2(history,targetDate,DEFAULT_V2_PARAMS);
+              if(forecast.status!=='experimental'||!forecast.trainingEnd) {
+                skipped.push({province,name,reason:'insufficient_history',historyCount:forecast.historyCount});
+                continue;
+              }
+              const saved=await db.savePrize8Predictions({
+                province,
+                targetDate,
+                trainingCutoff:forecast.trainingEnd,
+                items:forecast.top,
+                modelKey:'prize8-v2-daily',
+                modelVersion:`${V2_MODEL_VERSION}-daily-${XSMN_SCHEDULE_VERSION}`,
+                description:'Xếp hạng Giải 8 V2 tự động theo ngày',
+                parameters:forecast.params
+              });
+              if(saved && saved.created===false) {
+                skipped.push({province,name,reason:'already_exists'});
+                continue;
+              }
+              generated.push(province);
             }
-            await db.savePrize8Predictions({province,targetDate,trainingCutoff:forecast.trainingEnd,items:forecast.top,
-              modelVersion:`v1-daily-${XSMN_SCHEDULE_VERSION}`,parameters:forecast.params});
-            generated.push(province);
-          }
-          return json(res,200,{targetDate,scheduled,generated,skipped,predictions:await db.getDailyPredictions(targetDate),
-            note:'Dự đoán đã lưu không được tạo lại hoặc sửa sau khi có kết quả.'});
+            return {
+              targetDate,
+              scheduled,
+              generated,
+              skipped,
+              predictions:await db.getDailyPredictions(targetDate),
+              note:'Dự đoán đã lưu không được tạo lại hoặc sửa sau khi có kết quả.'
+            };
+          });
+          return json(res,200,payload);
         } catch(e) {return json(res,500,{error:e.message});}
       }
       if(url.pathname==='/api/station-results' && req.method==='GET') {
@@ -82,12 +139,47 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
           return json(res,200,{province,name:results[0]?.name||province,results,hasMore:results.length===limit});
         } catch(e) {return json(res,400,{error:e.message});}
       }
-      if(url.pathname==='/api/prize8/predict' && req.method==='GET') {
+      if((url.pathname==='/api/prize8/predict' || url.pathname==='/api/prize8/v2/predict') && req.method==='GET') {
+        const version = url.pathname==='/api/prize8/v2/predict'
+          ? 'v2'
+          : (url.searchParams.get('version') || 'v1').toLowerCase();
+        if(version!=='v1' && version!=='v2')
+          return json(res,400,{error:'Phiên bản mô hình chỉ hỗ trợ v1 hoặc v2'});
         const targetDate = url.searchParams.get('date') || vnClock().day;
         const province = url.searchParams.get('province') || '';
         if(!validDay(targetDate)) return json(res,400,{error:'Ngày dự đoán phải có định dạng YYYY-MM-DD'});
         if(!/^[a-zA-Z0-9_-]{1,100}$/.test(province))
           return json(res,400,{error:'Hãy chọn một đài xổ số miền Nam'});
+        if(version==='v2') {
+          const parameters = {
+            window:Number(url.searchParams.get('window') ?? 52),
+            halfLife:Number(url.searchParams.get('halfLife') ?? 12),
+            recentWeight:Number(url.searchParams.get('recentWeight') ?? 35)/100,
+            longWeight:Number(url.searchParams.get('longWeight') ?? 30)/100,
+            digitWeight:Number(url.searchParams.get('digitWeight') ?? 20)/100,
+            uniformShrinkage:Number(url.searchParams.get('uniformShrinkage') ?? 15)/100,
+            topK:Number(url.searchParams.get('topK') ?? 10),
+            backtestDraws:Number(url.searchParams.get('backtestDraws') ?? 80),
+            alpha:0.5,
+            alphaDigit:1
+          };
+          let p;
+          try { p=validateV2Parameters(parameters); }
+          catch(e) { return json(res,400,{error:e.message}); }
+          if(typeof db.getPrize8History!=='function')
+            return json(res,503,{error:'Cần MySQL để dự đoán giải 8'});
+          const history=await db.getPrize8History({province,before:targetDate,limit:500});
+          const coverage=analyzeHistoryCoverage(history,targetDate,province);
+          const forecast=rankPrize8V2(history,targetDate,p);
+          const evaluation=backtestPrize8V2(history,targetDate,p);
+          return json(res,200,{
+            modelVersion:V2_MODEL_VERSION,
+            province,name:history.at(-1)?.name||province,
+            targetDate,historyCount:history.length,
+            coverage,forecast,backtest:evaluation,
+            notes:'Mô hình V2 chỉ dùng lịch sử giải 8 của đài đã chọn trước ngày dự đoán và đối chiếu với V1, tần suất thô và mốc ngẫu nhiên đều. Đây là xếp hạng thử nghiệm, không phải xác suất trúng.'
+          });
+        }
         const parameters = {
           window:Number(url.searchParams.get('window') ?? 52),
           halfLife:Number(url.searchParams.get('halfLife') ?? 12),
