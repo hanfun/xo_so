@@ -1,0 +1,14 @@
+{
+  "name": "xskt-node-local",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Xem va tu dong tong hop ket qua xo so kien thiet 3 mien tren may local",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test",
+    "collect": "node src/cli.js"
+  },
+  "license": "UNLICENSED"
+}
