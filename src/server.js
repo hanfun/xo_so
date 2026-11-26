@@ -1,7 +1,7 @@
 import { createServer as createHttpServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { DATA_DIR, PUBLIC_DIR, validDay, vnClock } from './config.js';
+import { DATA_DIR, PUBLIC_DIR, prevDay, validDay, vnClock } from './config.js';
 import { exportCsv, listHistory as fileHistory, readDay as fileRead } from './store.js';
 import { PRIZE_NAMES } from './lottery.js';
 import { SLOTS } from './scheduler.js';
@@ -44,6 +44,7 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
     getStats:async()=>{throw new Error('Chức năng phân tích cần cấu hình MySQL');}
   };
   const dailyLocks = new Map();
+  let openingSync;
   async function withDailyLock(targetDate, task) {
     const previous = dailyLocks.get(targetDate) || Promise.resolve();
     const current = previous.catch(() => {}).then(task);
@@ -61,7 +62,8 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
           now:new Date().toISOString(),today:todayDay,
           today_stations:stationDetailsForDate(todayDay),
           regions:['MN'],prize_names:PRIZE_NAMES,schedule:SLOTS,
-          timezone:'Asia/Ho_Chi_Minh',database:store?'mysql':'json-test'
+          timezone:'Asia/Ho_Chi_Minh',database:store?'mysql':'json-test',
+          storageMode:db.storageMode || (store?'mysql':'json')
         });
       }
       if(url.pathname==='/api/history' && req.method==='GET')
@@ -85,13 +87,14 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
           });
         } catch(e) {return json(res,500,{error:e.message});}
       }
-      if(url.pathname==='/api/prize8/daily' && req.method==='POST') {
+      if(['/api/prize8/daily','/api/opening-sync'].includes(url.pathname) && req.method==='POST') {
+        const clock=vnClock();
         const targetDate=url.searchParams.get('date')||vnClock().day;
         if(!validDay(targetDate)||targetDate>vnClock().day)return json(res,400,{error:'Ngày dự đoán không hợp lệ'});
-        if(typeof db.getDailyPredictions!=='function'||typeof db.savePrize8Predictions!=='function')
-          return json(res,503,{error:'Cần MySQL để lưu dự đoán hằng ngày'});
-        try {
-          const payload = await withDailyLock(targetDate, async () => {
+        const canSave=typeof db.getDailyPredictions==='function' && typeof db.savePrize8Predictions==='function';
+        const ensureDaily = (targetDate) => withDailyLock(targetDate, async () => {
+            const report=await db.readDay?.(targetDate);
+            const replay=targetDate<clock.day || clock.hour>=16 || Boolean(report?.count);
             const scheduled=stationsForDate(targetDate);
             const existing=await db.getDailyPredictions(targetDate);
             const completed=new Set(existing.map(x=>x.province));
@@ -115,7 +118,7 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
                 items:forecast.top,
                 ranking:forecast.ranking,
                 modelKey:'prize8-v4-calendar-top5-daily',
-                modelVersion:`${V4_MODEL_VERSION}-top5-daily-${XSMN_SCHEDULE_VERSION}`,
+                modelVersion:`${V4_MODEL_VERSION}-top5-${replay?'replay':'daily'}-${XSMN_SCHEDULE_VERSION}`,
                 description:'Xếp hạng Giải 8 V4 có ngày, tháng, thứ và thứ tự kỳ',
                 parameters:forecast.params
               });
@@ -135,7 +138,29 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
               note:'Dự đoán đã lưu không được tạo lại hoặc sửa sau khi có kết quả.'
             };
           });
-          return json(res,200,payload);
+        if(url.pathname==='/api/opening-sync') {
+          if(!openingSync) openingSync=(async()=>{
+            const days=[];
+            for(let date=clock.day; days.length<31; date=prevDay(date)) days.unshift(date);
+            const errors=[];
+            for(const date of days) {
+              if(canSave) {
+                try { await ensureDaily(date); }
+                catch { errors.push({date,stage:'top5'}); }
+              }
+              if(date===clock.day && clock.hour<17) continue;
+              try {
+                const report=await db.readDay(date);
+                if(report?.status!=='complete_by_provider_count') await collector.collect(date);
+              } catch { errors.push({date,stage:'results'}); }
+            }
+            return {errors};
+          })().finally(()=>{ openingSync=undefined; });
+          return json(res,200,await openingSync);
+        }
+        if(!canSave) return json(res,503,{error:'Cần MySQL để lưu dự đoán hằng ngày'});
+        try {
+          return json(res,200,await ensureDaily(targetDate));
         } catch(e) {return json(res,500,{error:e.message});}
       }
       if(url.pathname==='/api/station-results' && req.method==='GET') {

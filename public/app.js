@@ -29,7 +29,9 @@ function notice(message,tone='') {
   $('notice').textContent=message;
   $('notice').className=`notice ${tone}`;
 }
+const githubPages = location.hostname.endsWith('.github.io');
 async function api(path,options) {
+  if(githubPages) return (await import('./pages-api.js')).pagesApi(path);
   const response=await fetch(path,options);
   const body=await response.json();
   if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
@@ -642,7 +644,7 @@ function renderDailyPredictions(data) {
     card.append(list);
 
     const foot=el('div','daily-card-foot',
-      `Học đến ${item.trainingCutoff} · Lưu cố định ${new Date(item.generatedAt).toLocaleString('vi-VN')}`);
+      `Học đến ${item.trainingCutoff} · ${item.modelVersion?.includes('-replay-') ? 'Tính lại để đối chiếu' : 'Lưu cố định'}${item.generatedAt ? ' ' + new Date(item.generatedAt).toLocaleString('vi-VN') : ''}`);
     card.append(foot);
     root.append(card);
   }
@@ -681,7 +683,13 @@ async function bootstrap() {
     $('predictionDate').value=today;
     $('distributionDate').value=today;
     $('toDate').value=today;$('fromDate').value=relativeDay(today,-89);
-    await Promise.all([loadDay(),loadStations(),loadDailyPredictions({date:today,ensure:true})]);
+    await Promise.all([loadDay(),loadStations(),loadDailyPredictions({date:today})]);
+    if(githubPages) {
+      for(const id of ['collectBtn','scanRangeBtn','csvBtn']) $(id).hidden=true;
+    } else void api('/api/opening-sync',{method:'POST'}).then(async ({errors})=>{
+      await Promise.all([loadDay(),loadStations(),loadDailyPredictions()]);
+      if(errors.length) notice('Một số ngày chưa cập nhật được kết quả hoặc Top 5.','error');
+    }).catch(()=>notice('Chưa hoàn tất tự động cập nhật lịch sử.','error'));
     await analyze();
   } catch(e) {notice(`Không kết nối được máy chủ: ${e.message}`,'error');}
 }

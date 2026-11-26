@@ -8,7 +8,7 @@ if (!validDay(day)) {
   console.error('Cách dùng: npm run collect -- YYYY-MM-DD [--yesterday]');
   process.exit(1);
 }
-const store = await createConfiguredStore();
+const store = await createConfiguredStore({ jsonFallback: true });
 try {
   const collector = createCollector({ store });
   let failed = false;
