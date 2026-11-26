@@ -240,3 +240,16 @@ npm test
 Có thêm test cho thuật toán trọng số, giữ số 0 đầu, backtest không rò rỉ dữ liệu tương lai, truy vấn MySQL giải 8 theo đài và API.
 
 > **Quan trọng:** xổ số là trò chơi ngẫu nhiên. Một mẫu lịch sử, dù có trọng số gần đây, có thể chỉ phản ánh nhiễu. Không dựa vào bảng xếp hạng để khẳng định khả năng thắng hoặc sử dụng như lời khuyên tài chính.
+
+### Đồng bộ JSON khi mở GitHub Pages (không cron)
+
+Worker chỉ đọc/ghi `data/YYYY-MM-DD.json` của ngày hiện tại theo giờ Việt Nam. Nếu trang đã có đủ đài và đủ giải thì không gọi Worker; nếu Worker đọc được file đủ kết quả thì không gọi nguồn xổ số. Từ 17:00, dữ liệu thiếu được bổ sung từ nguồn hiện có; kết quả đã hợp lệ được giữ nguyên. Không ghi file rỗng hoặc commit khi không có kết quả mới. GitHub Contents API dùng SHA để tránh ghi đè khi có nhiều lượt truy cập. Cache 5 phút theo điểm hiện diện Cloudflare và trong trình duyệt, không phải giới hạn toàn cầu.
+
+Cài đặt một lần:
+1. Tạo GitHub fine-grained personal access token chỉ cho `hanfun/xo_so` với quyền Contents: Read and write. Không đưa token vào frontend, file cấu hình, hay commit.
+2. Từ thư mục dự án, chạy `npx wrangler login`, rồi `npx wrangler deploy --config worker/wrangler.toml`.
+3. Chạy `npx wrangler secret put GITHUB_TOKEN --config worker/wrangler.toml` và nhập token tại prompt.
+4. Điền URL Worker thực tế vào `public/pages-sync-config.js` (chỉ URL, không có token), commit và push. Workflow Pages tự build lại. Cần cho phép Pages deploy từ GitHub Actions.
+5. Mở index.html hoặc today.html sau 17:00. Worker trả kết quả ngay sau khi lưu; push dữ liệu bằng PAT sẽ kích hoạt Pages build để cập nhật lịch sử. Kiểm tra tab Actions và thư mục data/. CORS chỉ cho origin https://hanfun.github.io; kiểm tra Origin không phải xác thực chống bot. Với lưu lượng lớn cần rate limit ở Cloudflare.
+
+Mặc định URL Worker để trống cho tới khi deploy thật; site vẫn đọc JSON đã xuất bản. Không ảnh hưởng MySQL local. `.gitignore` vẫn bỏ qua backup MySQL/JSON local; Worker dùng Contents API để ghi đúng file ngày, không upload backup database. Không tự backfill ngày cũ. Worker không chứa lịch chạy định kỳ. Nguồn bên thứ ba có thể chưa sẵn sàng hoặc lỗi; khi đó giữ dữ liệu hiện có và thử lại sau khoảng 5 phút.

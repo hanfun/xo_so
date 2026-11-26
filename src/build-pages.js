@@ -16,7 +16,7 @@ for (const file of await readdir('data')) {
 
 await mkdir(output, { recursive: true });
 await cp('public', output, { recursive: true });
-for (const file of ['prize8-predictor.js', 'station-schedule.js']) {
+for (const file of ['prize8-predictor.js', 'station-schedule.js', 'lottery-core.js', 'pages-sync-core.js']) {
   await cp(path.join('src', file), path.join(output, file));
 }
 const days = Object.fromEntries([...reports].map(([date, report]) => {

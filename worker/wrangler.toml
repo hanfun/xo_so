@@ -1,0 +1,5 @@
+name = "xo-so-sync"
+main = "index.js"
+compatibility_date = "2026-11-26"
+workers_dev = true
+# GITHUB_TOKEN must be configured as a Worker secret, never in this file.

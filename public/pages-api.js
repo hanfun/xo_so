@@ -4,11 +4,31 @@ import {
   analyzeHistoryCoverage, analyzePrize8Distribution
 } from './prize8-predictor.js';
 import { stationDetailsForDate } from './station-schedule.js';
+import { isCompleteReport, mergeReports } from './pages-sync-core.js';
+import { workerUrl } from './pages-sync-config.js';
+
+let syncAttempt;
+async function maybeSyncToday(days, today) {
+  if (!workerUrl || isCompleteReport(days[today], today)) return;
+  if (syncAttempt?.date === today && Date.now() - syncAttempt.at < 300_000) return syncAttempt.promise;
+  const promise = (async () => {
+    try {
+      const response = await fetch(new URL('/sync', workerUrl), { signal: AbortSignal.timeout(45_000) });
+      if (!response.ok) throw new Error('Sync HTTP ' + response.status);
+      const update = await response.json();
+      if (update.date !== today || !update.report) return;
+      const merged = mergeReports(days[today], update.report, today);
+      if (merged.changed) days[today] = merged.report;
+    } catch (error) { console.warn('Không đồng bộ được JSON hôm nay:', error.message); }
+  })();
+  syncAttempt = { date: today, at: Date.now(), promise };
+  return promise;
+}
 
 let dataset;
 async function loadDataset() {
   if (!dataset) {
-    dataset = fetch(new URL('./results.json', import.meta.url)).then(response => {
+    dataset = fetch(new URL('./results.json', import.meta.url), { cache: 'no-cache' }).then(response => {
       if (!response.ok) throw new Error('Chưa có dữ liệu JSON trên GitHub Pages.');
       return response.json();
     }).catch(error => {
@@ -35,6 +55,7 @@ export async function pagesApi(request) {
     throw new Error('GitHub Pages đọc kết quả từ lần xuất bản JSON gần nhất.');
   }
   const days = await loadDataset();
+  if (date === today) await maybeSyncToday(days, today);
   if (pathname === '/api/day') return days[date] ?? { date, count: 0, results: [] };
   if (pathname === '/api/history') return { dates: Object.keys(days).sort().reverse() };
   const draws = Object.values(days).flatMap(day => day.results);

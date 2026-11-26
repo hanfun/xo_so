@@ -396,3 +396,11 @@ A new agent's development work is complete only if:
 6. No secret, local DB dump, production lottery result fabrication, or unverified efficacy claim is committed.
 
 **Maintainer note:** This file is an agent-readable specification/handoff for the currently implemented experiment. It deliberately separates observable implementation facts from future proposals. Agents should record any deviation in an explicit PR description before merging.
+
+## GitHub Pages: lazy sync (2026-11-26)
+
+- Local MySQL remains unchanged; do not commit local DB backups or credentials.
+- `src/lottery-core.js` is runtime-neutral; `src/lottery.js` retains Node source configuration. `src/pages-sync-core.js` validates scheduled stations and complete prize sets, merges only new valid stations, and performs optimistic SHA retries.
+- `worker/index.js` is an opt-in Cloudflare Worker. It uses a repository-scoped GITHUB_TOKEN secret and writes only today's public lottery report to `data/YYYY-MM-DD.json`. It never accepts client-supplied prize values or dates.
+- Pages reads the published dataset first; only incomplete current dates invoke the configured Worker. Keep URL configuration separate from secrets. Pages workflow rebuilds on data changes. No cron or automatic historical backfill. Per-location cache and SHA protection are not global rate limiting.
+- Setup instructions in README. Add/maintain tests in tests/pages-sync.test.js. Distinguish repository code from an actually deployed Worker.
