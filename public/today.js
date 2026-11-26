@@ -41,6 +41,8 @@ function setNotice(message, tone = '') {
 }
 
 const githubPages = location.hostname.endsWith('.github.io');
+const dataSource = githubPages ? 'JSON đã xuất bản' : 'kho dữ liệu local';
+$('storageLabel').textContent = githubPages ? 'JSON trên GitHub Pages' : 'MySQL local · JSON dự phòng';
 async function api(path, options) {
   if (githubPages) return (await import('./pages-api.js')).pagesApi(path);
   const response = await fetch(path, options);
@@ -197,7 +199,7 @@ async function loadTop5ForSelected() {
   }
 
   $('top5Title').textContent = `Top 5 Giải 8 — ${station.name}`;
-  $('top5Meta').textContent = 'Đang tính toán xếp hạng V4 từ lịch sử MySQL...';
+  $('top5Meta').textContent = `Đang tính xếp hạng V4 từ ${dataSource}...`;
   $('top5Cards').replaceChildren(el('p', 'placeholder', 'Đang tải dữ liệu xếp hạng...'));
 
   try {
@@ -241,7 +243,7 @@ function renderResultsBoard() {
   root.replaceChildren();
   const draws = (dayReport?.results || []).filter(d => d.region === 'MN');
   if (!draws.length) {
-    meta.textContent = `Chưa có dữ liệu kết quả ngày ${dateLabel(selectedDate)} trong MySQL.`;
+    meta.textContent = `Chưa có kết quả ngày ${dateLabel(selectedDate)} trong ${dataSource}.`;
     const empty = el('div', 'empty');
     empty.append(
       el('div', 'empty-icon', '◷'),
@@ -252,7 +254,7 @@ function renderResultsBoard() {
     return;
   }
 
-  meta.textContent = `${dateLabel(selectedDate)} · ${draws.length} đài đã có kết quả trong MySQL · cột đài đang chọn được làm nổi bật.`;
+  meta.textContent = `${dateLabel(selectedDate)} · ${draws.length} đài đã có kết quả trong ${dataSource}.`;
 
   // Put selected station first for convenience while still showing all stations of that day.
   const orderedDraws = [...draws].sort((a, b) => {
@@ -317,7 +319,7 @@ function renderResultsBoard() {
   board.append(scroll);
 
   const foot = el('div', 'lottery-board-footer',
-    `Dữ liệu MySQL · ${draws.length} đài · cập nhật ${dayReport?.fetched_at ? new Date(dayReport.fetched_at).toLocaleString('vi-VN') : '—'}`);
+    `${dataSource} · ${draws.length} đài · cập nhật ${dayReport?.fetched_at ? new Date(dayReport.fetched_at).toLocaleString('vi-VN') : '—'}`);
   board.append(foot);
   root.append(board);
 }
@@ -355,7 +357,7 @@ async function loadScreenForDate(day, { ensureDaily = false } = {}) {
     if (reportData.count) {
       setNotice(`Đã có kết quả ${reportData.count} đài ngày ${day.split('-').reverse().join('/')} · chọn từng đài để đối chiếu Top 5 Giải 8.`, 'ok');
     } else {
-      setNotice(`Ngày ${day.split('-').reverse().join('/')} có ${scheduledStations.length} đài mở thưởng theo lịch; hiện chưa có kết quả trong MySQL.`, 'warn');
+      setNotice(`Ngày ${day.split('-').reverse().join('/')} có ${scheduledStations.length} đài mở thưởng theo lịch. Hiện chưa có kết quả trong ${dataSource}.`, 'warn');
     }
   } catch (e) {
     setNotice(`Không tải được dữ liệu: ${e.message}`, 'error');

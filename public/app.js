@@ -30,6 +30,9 @@ function notice(message,tone='') {
   $('notice').className=`notice ${tone}`;
 }
 const githubPages = location.hostname.endsWith('.github.io');
+const dataSource = githubPages ? 'JSON đã xuất bản' : 'kho dữ liệu local';
+$('storageLabel').textContent = githubPages ? 'JSON trên GitHub Pages' : 'MySQL local · JSON dự phòng';
+if(githubPages) $('updateSchedule').textContent='Kết quả được cập nhật khi bản JSON mới được xuất bản.';
 async function api(path,options) {
   if(githubPages) return (await import('./pages-api.js')).pagesApi(path);
   const response=await fetch(path,options);
@@ -131,7 +134,7 @@ function renderResults() {
     tbody.append(tr);
   }
   table.append(tbody);scroll.append(table);board.append(scroll);
-  const foot=el('div','lottery-board-footer',`Dữ liệu MySQL · ${data.count} đài · cập nhật ${new Date(data.fetched_at).toLocaleString('vi-VN')}`);
+  const foot=el('div','lottery-board-footer',`${dataSource} · ${data.count} đài · cập nhật ${new Date(data.fetched_at).toLocaleString('vi-VN')}`);
   board.append(foot);root.append(board);
 }
 function joinedPrize(prizes,tier) {return (prizes?.[tier]||[]).join(' · ')||'—';}
@@ -139,7 +142,7 @@ async function loadStationHistory(province,reset=false) {
   if(reset) {
     selectedStation=province;stationHistoryBefore='9999-12-31';
     $('stationHistoryRows').replaceChildren();$('stationHistory').hidden=false;
-    $('stationHistoryMeta').textContent='Đang đọc lịch sử từ MySQL...';
+    $('stationHistoryMeta').textContent=`Đang đọc lịch sử từ ${dataSource}...`;
   }
   const params=new URLSearchParams({province,before:stationHistoryBefore,limit:'50'});
   const button=$('stationHistoryMore');button.disabled=true;
@@ -158,7 +161,7 @@ async function loadStationHistory(province,reset=false) {
       rows.append(tr);
     }
     const loaded=rows.children.length;
-    $('stationHistoryMeta').textContent=`Đã tải ${loaded} kỳ từ MySQL. Thống kê bên dưới đã lọc theo đài này.`;
+    $('stationHistoryMeta').textContent=`Đã tải ${loaded} kỳ từ ${dataSource}. Thống kê bên dưới đã lọc theo đài này.`;
     stationHistoryBefore=data.results.at(-1)?.date||stationHistoryBefore;
     button.hidden=!data.hasMore;button.disabled=false;
     const select=$('stationSelect');
@@ -336,7 +339,7 @@ async function analyze() {
     $('analysisNote').textContent='Hãy chọn khoảng thời gian hợp lệ.';return;
   }
   analyzing=true;$('analyzeBtn').disabled=true;
-  $('analysisNote').textContent='Đang tính thống kê từ MySQL...';
+  $('analysisNote').textContent=`Đang tính thống kê từ ${dataSource}...`;
   const params=new URLSearchParams({
     from,to,province:$('stationSelect').value,prize:$('prizeSelect').value
   });
@@ -603,8 +606,8 @@ function renderDailyPredictions(data) {
       const reason=skipped?.reason==='insufficient_history'
         ? `Mới có ${skipped.historyCount??0} kỳ Giải 8 trước ngày ${data.targetDate} (cần tối thiểu 20 kỳ để tạo Top 10).`
         : (isPastDay
-          ? `Ngày ${data.targetDate} chưa có bản dự đoán lưu cố định trong MySQL. Bạn có thể bấm “Xếp hạng giải 8” bên dưới hoặc xem tại màn hình Hôm nay · Top 5.`
-          : 'Chưa có đủ lịch sử Giải 8 trong MySQL cho đài này.');
+          ? `Chưa có bảng xếp hạng. Bạn có thể bấm “Xếp hạng giải 8” bên dưới hoặc xem tại màn hình Hôm nay · Top 5.`
+          : `Chưa có đủ lịch sử Giải 8 trong ${dataSource} cho đài này.`);
       card.append(head,el('p','daily-empty-note',reason));
       root.append(card);
       continue;

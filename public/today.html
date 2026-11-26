@@ -19,14 +19,14 @@
         <a href="./" class="nav-link">Tổng quan</a>
         <a href="./today.html" class="nav-link active">Hôm nay · Top 5</a>
       </nav>
-      <div class="run-status"><span class="dot"></span> MySQL trên máy local</div>
+      <div class="run-status"><span class="dot"></span> <span id="storageLabel">Đang xác định nguồn dữ liệu</span></div>
     </header>
 
     <main>
       <section class="hero today-hero">
         <div class="eyebrow">MÀN HÌNH HÔM NAY / XSMN</div>
         <h1>Đài mở thưởng &amp; <span>Top 5 Giải 8</span></h1>
-        <p>Chọn 1 đài mở thưởng để xem 5 số Giải 8 có điểm xếp hạng thống kê cao nhất (V3) và đối chiếu kết quả thực tế trong ngày.</p>
+        <p>Chọn đài để xem Top 5 Giải 8 theo xếp hạng thống kê và đối chiếu với kết quả trong ngày.</p>
       </section>
 
       <section class="toolbar" aria-label="Chọn ngày xem">
@@ -60,7 +60,7 @@
       <section class="today-screen-section" aria-labelledby="top5Title">
         <div class="section-top">
           <div>
-            <div class="eyebrow">BƯỚC 2 / XẾP HẠNG GIẢI 8 (V3)</div>
+            <div class="eyebrow">BƯỚC 2 / XẾP HẠNG GIẢI 8</div>
             <h2 id="top5Title">Top 5 số Giải 8 nổi bật</h2>
             <p id="top5Meta">Chọn một đài phía trên để xem 5 con số có điểm xếp hạng cao nhất.</p>
           </div>
@@ -82,7 +82,7 @@
           <div>
             <div class="eyebrow">BƯỚC 3 / KẾT QUẢ THỰC TẾ TRONG NGÀY</div>
             <h2 id="todayResultTitle">Kết quả XSMN ngày đã chọn</h2>
-            <p id="todayResultMeta">Đang kiểm tra dữ liệu kết quả trong MySQL...</p>
+            <p id="todayResultMeta">Đang tải kết quả...</p>
           </div>
         </div>
         <div id="todayResultBoard" aria-live="polite"></div>

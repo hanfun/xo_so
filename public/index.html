@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0f172a">
-  <title>XSMN Local — MySQL &amp; Thống kê</title>
+  <title>XSMN — Kết quả &amp; Thống kê</title>
   <link rel="stylesheet" href="./style.css">
   <script src="./app.js" type="module"></script>
 </head>
@@ -13,13 +13,13 @@
     <header class="topbar">
       <div class="brand">
         <div class="mark" aria-hidden="true">XS</div>
-        <div><strong>XSMN Local</strong><span>Thống kê xổ số miền Nam · MySQL</span></div>
+        <div><strong>XSMN</strong><span>Thống kê xổ số miền Nam</span></div>
       </div>
       <nav class="topnav" aria-label="Điều hướng màn hình">
         <a href="./" class="nav-link active">Tổng quan</a>
         <a href="./today.html" class="nav-link">Hôm nay · Top 5</a>
       </nav>
-      <div class="run-status"><span class="dot"></span> MySQL trên máy local</div>
+      <div class="run-status"><span class="dot"></span> <span id="storageLabel">Đang xác định nguồn dữ liệu</span></div>
     </header>
     <main>
       <section class="hero">
@@ -135,7 +135,7 @@
           </select></label>
           <button id="analyzeBtn" class="btn primary" type="button">Phân tích</button>
         </div>
-        <div class="analysis-note" id="analysisNote" role="status">Đang đọc dữ liệu MySQL...</div>
+        <div class="analysis-note" id="analysisNote" role="status">Đang tải dữ liệu...</div>
         <div class="summary analysis-summary">
           <div class="stat"><div class="stat-label">Kết quả trong mẫu</div><strong id="totalNumbers">—</strong></div>
           <div class="stat"><div class="stat-label">Số lượt đài quay</div><strong id="totalDraws">—</strong></div>
@@ -168,7 +168,7 @@
           <div class="section-top"><div>
             <div class="eyebrow">TỰ ĐỘNG / CÁC ĐÀI HÔM NAY</div>
             <h2 id="dailyPredictionTitle">Dự đoán Giải 8 đã lưu</h2>
-            <p id="dailyPredictionMessage">Đang kiểm tra dự đoán trong MySQL...</p>
+            <p id="dailyPredictionMessage">Đang tải xếp hạng Giải 8...</p>
           </div></div>
           <div id="dailyPredictionCards" class="daily-prediction-grid"></div>
         </div>
@@ -268,7 +268,7 @@
 
       <section class="help-row"><div class="mini-icon">◷</div><div>
         <strong>Tự quét XSMN khi Node.js đang chạy</strong>
-        <p>17:00, 18:00, 19:00 và quét bù 07:30 sáng hôm sau (giờ Việt Nam). Dữ liệu chính lưu MySQL local; JSON là bản sao dự phòng.</p>
+        <p id="updateSchedule">17:00, 18:00, 19:00 và quét bù 07:30 sáng hôm sau (giờ Việt Nam).</p>
       </div></section>
     </main>
     <footer>
