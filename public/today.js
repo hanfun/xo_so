@@ -42,6 +42,7 @@ function setNotice(message, tone = '') {
 
 const githubPages = location.hostname.endsWith('.github.io');
 const dataSource = githubPages ? 'JSON đã xuất bản' : 'kho dữ liệu local';
+if (githubPages) $('btnScanToday').hidden = true;
 $('storageLabel').textContent = githubPages ? 'JSON trên GitHub Pages' : 'MySQL local · JSON dự phòng';
 async function api(path, options) {
   if (githubPages) return (await import('./pages-api.js')).pagesApi(path);
@@ -389,13 +390,12 @@ async function bootstrap() {
     todayStationsFallback = Array.isArray(status.today_stations) ? status.today_stations : [];
     $('todayDateInput').max = today;
     await loadScreenForDate(today);
-    if (githubPages) $('btnScanToday').hidden = true;
-    else void api('/api/opening-sync', { method: 'POST' }).then(async ({errors}) => {
+    if (!githubPages) void api('/api/opening-sync', { method: 'POST' }).then(async ({errors}) => {
       await loadScreenForDate(selectedDate || today);
       if (errors.length) setNotice('Một số ngày chưa cập nhật được kết quả hoặc Top 5.');
     }).catch(() => setNotice('Chưa hoàn tất tự động cập nhật lịch sử.'));
   } catch (e) {
-    setNotice(`Không kết nối được máy chủ: ${e.message}`, 'error');
+    setNotice(`Không tải được dữ liệu: ${e.message}. Hãy thử tải lại trang.`, 'error');
   }
 }
 
@@ -406,6 +406,7 @@ $('todayDateInput').addEventListener('change', () => {
   if (day) void loadScreenForDate(day, { ensureDaily: day === today });
 });
 $('btnRefresh').addEventListener('click', () => {
+  if (githubPages) { location.reload(); return; }
   if (selectedDate) void loadScreenForDate(selectedDate, { ensureDaily: false });
 });
 $('btnScanToday').addEventListener('click', () => { void scanSelectedDate(); });

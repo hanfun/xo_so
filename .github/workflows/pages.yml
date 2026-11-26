@@ -28,6 +28,7 @@ jobs:
           node-version: '22'
       - run: npm ci
       - run: npm run build:pages
+      - run: node src/check-pages.js
       - id: artifact
         run: echo "name=github-pages-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-pages-artifact@v4
