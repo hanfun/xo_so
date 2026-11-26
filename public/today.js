@@ -41,7 +41,7 @@ function setNotice(message, tone = '') {
 }
 
 const githubPages = location.hostname.endsWith('.github.io');
-const dataSource = githubPages ? 'JSON đã xuất bản' : 'kho dữ liệu local';
+const dataSource = githubPages ? 'JSON / nguồn trực tiếp' : 'kho dữ liệu local';
 if (githubPages) $('btnScanToday').hidden = true;
 $('storageLabel').textContent = githubPages ? 'JSON trên GitHub Pages' : 'MySQL local · JSON dự phòng';
 async function api(path, options) {
@@ -249,7 +249,7 @@ function renderResultsBoard() {
     empty.append(
       el('div', 'empty-icon', '◷'),
       el('strong', '', `Chưa có kết quả XSMN ngày ${selectedDate.split('-').reverse().join('/')}`),
-      el('p', '', 'XSMN mở thưởng lúc 16:15 giờ Việt Nam. Bạn có thể bấm “Quét KQ ngày này” ở phía trên để kiểm tra và cập nhật dữ liệu mới nhất.')
+      el('p', '', 'XSMN mở thưởng lúc 16:15 giờ Việt Nam. Website tự kiểm tra từ 17:00 nếu chưa đủ kết quả; bạn có thể bấm “Làm mới”.')
     );
     root.append(empty);
     return;
@@ -355,7 +355,11 @@ async function loadScreenForDate(day, { ensureDaily = false } = {}) {
     renderResultsBoard();
     await loadTop5ForSelected();
 
-    if (reportData.count) {
+    if (githubPages && reportData.sync_status === 'source_unavailable') {
+      setNotice('Chưa lấy được kết quả mới từ nguồn API (có thể do CORS hoặc nguồn gián đoạn). Dữ liệu đã có được giữ nguyên.', 'warn');
+    } else if (githubPages && ['browser','memory'].includes(reportData.storage_mode)) {
+      setNotice('Đã lấy ' + reportData.count + ' đài từ API · ' + (reportData.storage_mode === 'browser' ? 'lưu trên trình duyệt' : 'chỉ lưu trong phiên hiện tại') + ', chưa lưu vào GitHub.', 'ok');
+    } else if (reportData.count) {
       setNotice(`Đã có kết quả ${reportData.count} đài ngày ${day.split('-').reverse().join('/')} · chọn từng đài để đối chiếu Top 5 Giải 8.`, 'ok');
     } else {
       setNotice(`Ngày ${day.split('-').reverse().join('/')} có ${scheduledStations.length} đài mở thưởng theo lịch. Hiện chưa có kết quả trong ${dataSource}.`, 'warn');

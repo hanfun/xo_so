@@ -4,26 +4,9 @@ import {
   analyzeHistoryCoverage, analyzePrize8Distribution
 } from './prize8-predictor.js';
 import { stationDetailsForDate } from './station-schedule.js';
-import { isCompleteReport, mergeReports } from './pages-sync-core.js';
+import { createBrowserSync } from './pages-browser-sync.js';
 import { workerUrl } from './pages-sync-config.js';
-
-let syncAttempt;
-async function maybeSyncToday(days, today) {
-  if (!workerUrl || isCompleteReport(days[today], today)) return;
-  if (syncAttempt?.date === today && Date.now() - syncAttempt.at < 300_000) return syncAttempt.promise;
-  const promise = (async () => {
-    try {
-      const response = await fetch(new URL('/sync', workerUrl), { signal: AbortSignal.timeout(45_000) });
-      if (!response.ok) throw new Error('Sync HTTP ' + response.status);
-      const update = await response.json();
-      if (update.date !== today || !update.report) return;
-      const merged = mergeReports(days[today], update.report, today);
-      if (merged.changed) days[today] = merged.report;
-    } catch (error) { console.warn('Không đồng bộ được JSON hôm nay:', error.message); }
-  })();
-  syncAttempt = { date: today, at: Date.now(), promise };
-  return promise;
-}
+const maybeSyncToday = createBrowserSync({workerUrl});
 
 let dataset;
 async function loadDataset() {

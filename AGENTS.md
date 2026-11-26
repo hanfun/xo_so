@@ -404,3 +404,5 @@ A new agent's development work is complete only if:
 - `worker/index.js` is an opt-in Cloudflare Worker. It uses a repository-scoped GITHUB_TOKEN secret and writes only today's public lottery report to `data/YYYY-MM-DD.json`. It never accepts client-supplied prize values or dates.
 - Pages reads the published dataset first; only incomplete current dates invoke the configured Worker. Keep URL configuration separate from secrets. Pages workflow rebuilds on data changes. No cron or automatic historical backfill. Per-location cache and SHA protection are not global rate limiting.
 - Setup instructions in README. Add/maintain tests in tests/pages-sync.test.js. Distinguish repository code from an actually deployed Worker.
+
+- Browser fallback: `src/pages-browser-sync.js` is used by Pages if Worker is absent or unavailable, with validated per-day LocalStorage and simple CORS GET. Never claim browser storage is a GitHub commit. Tests mock providers and storage; verify real CORS separately.

@@ -30,9 +30,9 @@ function notice(message,tone='') {
   $('notice').className=`notice ${tone}`;
 }
 const githubPages = location.hostname.endsWith('.github.io');
-const dataSource = githubPages ? 'JSON đã xuất bản' : 'kho dữ liệu local';
+const dataSource = githubPages ? 'JSON / nguồn trực tiếp' : 'kho dữ liệu local';
 $('storageLabel').textContent = githubPages ? 'JSON trên GitHub Pages' : 'MySQL local · JSON dự phòng';
-if(githubPages) $('updateSchedule').textContent='Đọc JSON đã lưu; nếu đã cấu hình Worker, tự kiểm tra kết quả hôm nay khi mở trang.';
+if(githubPages) $('updateSchedule').textContent='Đọc JSON đã lưu; nếu thiếu kết quả hôm nay, tự kiểm tra nguồn từ 17:00.';
 async function api(path,options) {
   if(githubPages) return (await import('./pages-api.js')).pagesApi(path);
   const response=await fetch(path,options);
@@ -90,7 +90,9 @@ function renderResults() {
   $('dayDisplay').textContent=data.date.split('-').reverse().join('/');
   $('csvBtn').disabled=!data.count;
   $('meta').textContent=`${dateLabel(data.date)} · ${data.count||0} đài miền Nam`;
-  if(!data.count)notice('Chưa có dữ liệu XSMN ngày này. Chọn ngày khác hoặc bấm Quét XSMN.','warn');
+  if(githubPages && data.sync_status==='source_unavailable')notice('Chưa lấy được dữ liệu mới từ API (CORS hoặc nguồn gián đoạn). Dữ liệu cũ được giữ nguyên.','warn');
+  else if(githubPages && ['browser','memory'].includes(data.storage_mode))notice('Đã lấy '+data.count+' đài từ API · '+(data.storage_mode==='browser'?'lưu trên trình duyệt':'lưu trong phiên hiện tại')+', chưa lưu vào GitHub.','ok');
+  else if(!data.count)notice('Chưa có dữ liệu XSMN ngày này.','warn');
   else if(data.status==='complete_by_provider_count')
     notice(`Đã lưu ${data.count} đài XSMN · ${new Date(data.fetched_at).toLocaleString('vi-VN')} (dữ liệu tham khảo).`,'ok');
   else notice(`Có ${data.count} đài; dữ liệu chưa đủ/đang kiểm tra. ${(data.issues||[]).slice(0,2).join(' · ')}`,'warn');

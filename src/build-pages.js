@@ -17,7 +17,7 @@ for (const file of await readdir('data')) {
 
 await mkdir(output, { recursive: true });
 await cp('public', output, { recursive: true });
-for (const file of ['prize8-predictor.js', 'station-schedule.js', 'lottery-core.js', 'pages-sync-core.js']) {
+for (const file of ['prize8-predictor.js', 'station-schedule.js', 'lottery-core.js', 'pages-sync-core.js', 'pages-browser-sync.js']) {
   await cp(path.join('src', file), path.join(output, file));
 }
 const days = Object.fromEntries([...reports].map(([date, report]) => {
@@ -32,7 +32,7 @@ await writeFile(path.join(output, '.nojekyll'), '');
 // Keep a single cache version across the entry scripts and their ES module imports.
 // This avoids mixing stale browser/CDN modules with freshly deployed files.
 const assetFiles = ['app.js','today.js','pages-api.js','pages-sync-config.js',
-  'prize8-predictor.js','station-schedule.js','lottery-core.js','pages-sync-core.js','style.css','results.json'];
+  'prize8-predictor.js','station-schedule.js','lottery-core.js','pages-sync-core.js','pages-browser-sync.js','style.css','results.json'];
 const hash = createHash('sha256');
 for (const file of assetFiles) hash.update(await readFile(path.join(output,file)));
 const version = hash.digest('hex').slice(0,16);

@@ -253,3 +253,7 @@ Cài đặt một lần:
 5. Mở index.html hoặc today.html sau 17:00. Worker trả kết quả ngay sau khi lưu; push dữ liệu bằng PAT sẽ kích hoạt Pages build để cập nhật lịch sử. Kiểm tra tab Actions và thư mục data/. CORS chỉ cho origin https://hanfun.github.io; kiểm tra Origin không phải xác thực chống bot. Với lưu lượng lớn cần rate limit ở Cloudflare.
 
 Mặc định URL Worker để trống cho tới khi deploy thật; site vẫn đọc JSON đã xuất bản. Không ảnh hưởng MySQL local. `.gitignore` vẫn bỏ qua backup MySQL/JSON local; Worker dùng Contents API để ghi đúng file ngày, không upload backup database. Không tự backfill ngày cũ. Worker không chứa lịch chạy định kỳ. Nguồn bên thứ ba có thể chưa sẵn sàng hoặc lỗi; khi đó giữ dữ liệu hiện có và thử lại sau khoảng 5 phút.
+
+### Dự phòng trình duyệt khi chưa có Worker
+
+Nếu JSON hôm nay thiếu, sau 17:00 Pages thử nguồn trực tiếp bằng GET CORS (nguồn chính rồi nguồn phụ khi lỗi). Kết quả hợp lệ lưu theo ngày trong LocalStorage, hoặc bộ nhớ phiên nếu trình duyệt chặn lưu. Không gửi lại khi ngày đã đủ; lần thử thất bại được giới hạn 5 phút trên trình duyệt. Không thể ghi repository từ trình duyệt; chỉ Worker đã cấu hình mới lưu file lên GitHub. Nếu API chặn CORS, giao diện báo lỗi và giữ dữ liệu đã có. CI mock nguồn ngoài; CORS thực tế cần kiểm tra trên trình duyệt.
