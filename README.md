@@ -215,7 +215,7 @@ Trong đó `province` là mã đài lấy từ `GET /api/stations`. API trả v�
 
 Để so sánh các cấu hình Top 5 trên MySQL cục bộ, chạy `npm run benchmark:top5 -- 2026-06-01 2026-11-23`. Lệnh dùng tối đa 500 kỳ mỗi đài, chọn cấu hình trên các kỳ trước mốc đầu, rồi so sánh với V2 và V3 từ mốc đầu đến trước mốc cuối. Mỗi lượt chỉ dùng lịch sử của cùng đài trước ngày quay.
 
-Các bản dự đoán hằng ngày mới dùng V3 với trọng số ngắn hạn 15% và dài hạn 30%. Trên giai đoạn kiểm tra, cấu hình đạt 35/550 (6,36%, Wilson 95% từ 4,61% đến 8,72%), còn V2 và V3 mặc định cùng đạt 33/550 (6,00%). Mốc ngẫu nhiên 5% nằm trong khoảng tin cậy này.
+Các bản dự đoán hằng ngày mới dùng V4: 80% phân phối V3, 12% tương đồng lịch (thứ, ngày trong tháng, tháng) và 8% thứ tự kỳ. Backtest tách mốc `2026-06-01` trên 21 đài cho kết quả giai đoạn sau mốc là 36/559 Top 5 (6,44%, Wilson 95% từ 4,69% đến 8,79%), so với V3 là 33/559 (5,90%). Trước mốc chia, V4 thấp hơn V3 (60 so với 63 lần trúng trên 1.196 kỳ), và mốc ngẫu nhiên 5% vẫn nằm trong khoảng tin cậy; vì vậy đây chỉ là thử nghiệm, không phải bằng chứng về lợi thế dự đoán.
 
 Bản lưu mới giữ cả thứ tự 100 số trong metadata và vẫn trả 10 mục trong `top`. API hằng ngày trả `actualRank` và `top5Hit`. Bản lưu cũ chỉ xác định hạng nếu số xổ nằm trong 10 mục đã lưu. Endpoint V3 hỗ trợ `includeRanking=true` để trả thêm `forecast.ranking`. Màn hình Top 5 dùng phép tính này khi ngày được chọn chưa có bản lưu và ghi rõ đó là kết quả tính lại.
 

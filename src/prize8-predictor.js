@@ -19,6 +19,7 @@ import { XSMN_WEEKLY_SCHEDULE } from './station-schedule.js';
 export const MIN_HISTORY = 20;
 export const V2_MODEL_VERSION = 'v2.0.0';
 export const V3_MODEL_VERSION = 'v3.0.0';
+export const V4_MODEL_VERSION = 'v4.0.0';
 export const UNIFORM_LOG_LOSS = Math.log(100);
 export const UNIFORM_BRIER = 0.99;
 export const UNIFORM_AVG_RANK = 50.5;
@@ -59,6 +60,33 @@ export const DEFAULT_V3_PARAMS = Object.freeze({
 });
 
 export const V3_TOP5_WEIGHTS = Object.freeze({ shortWeight: 0.15, longWeight: 0.30 });
+
+export const DEFAULT_V4_PARAMS = Object.freeze({
+  ...DEFAULT_V3_PARAMS,
+  baseWeight: 0.80,
+  calendarWeight: 0.12,
+  ordinalWeight: 0.08,
+  calendarHalfLife: 80,
+  alphaContext: 2,
+  topK: 10,
+  backtestDraws: 80
+});
+
+export function validateV4Parameters(params = {}) {
+  const p = { ...DEFAULT_V4_PARAMS, ...params };
+  validateV3Parameters(p);
+  for (const key of ['baseWeight', 'calendarWeight', 'ordinalWeight']) {
+    if (!Number.isFinite(p[key]) || p[key] < 0 || p[key] > 1)
+      throw new Error(`${key} phải nằm trong khoảng 0–1`);
+  }
+  if (Math.abs(p.baseWeight + p.calendarWeight + p.ordinalWeight - 1) > 1e-6)
+    throw new Error('Tổng ba trọng số V4 (baseWeight, calendarWeight, ordinalWeight) phải bằng 1');
+  if (!Number.isFinite(p.calendarHalfLife) || p.calendarHalfLife < 12 || p.calendarHalfLife > 500)
+    throw new Error('calendarHalfLife phải nằm trong khoảng 12–500 kỳ');
+  if (!Number.isFinite(p.alphaContext) || p.alphaContext <= 0 || p.alphaContext > 20)
+    throw new Error('alphaContext phải lớn hơn 0 và không quá 20');
+  return p;
+}
 
 export function validateParameters(params = {}) {
   const p = { ...DEFAULT_PARAMS, ...params };
@@ -911,5 +939,154 @@ export function backtestPrize8V3(history, targetDate, options = {}) {
     warning: evaluated < 30
       ? 'Mẫu kiểm định nhỏ (< 30 kỳ): dao động ngẫu nhiên lớn, chưa đủ cơ sở kết luận.'
       : 'Kết quả kiểm định quá khứ (kể cả khi cao hơn mốc ngẫu nhiên) không chứng minh lợi thế ở kỳ quay công bằng tiếp theo.'
+  };
+}
+
+function utcDateParts(day) {
+  const date = new Date(`${day}T12:00:00Z`);
+  return { weekday: date.getUTCDay(), month: date.getUTCMonth() + 1, day: date.getUTCDate() };
+}
+
+function cyclicDistance(a, b, size) {
+  const direct = Math.abs(a - b);
+  return Math.min(direct, size - direct);
+}
+
+function evaluateV4Core(allPast, targetDate, params) {
+  if (allPast.length < MIN_HISTORY) return { items: [], probs: [] };
+  const base = evaluateV3Core(allPast, params);
+  const target = utcDateParts(targetDate);
+  const calendarCounts = new Array(100).fill(0);
+  const ordinalCounts = new Array(100).fill(0);
+  let calendarSum = 0;
+  let ordinalSum = 0;
+  const targetOrdinal = allPast.length + 1;
+  for (let i = 0; i < allPast.length; i++) {
+    const row = allPast[i];
+    const n = Number(row.number);
+    const age = allPast.length - 1 - i;
+    const recency = Math.pow(0.5, age / params.calendarHalfLife);
+    const parts = utcDateParts(row.date);
+    // Smooth similarities avoid tiny exact-match buckets. Weekday, day-of-month,
+    // and month each contribute a normalized, past-only calendar signal.
+    const weekdaySimilarity = parts.weekday === target.weekday ? 1 : 0.15;
+    const daySimilarity = Math.exp(-cyclicDistance(parts.day, target.day, 31) / 4);
+    const monthSimilarity = Math.exp(-cyclicDistance(parts.month, target.month, 12) / 2);
+    const calendarSimilarity = recency
+      * (0.40 * weekdaySimilarity + 0.35 * daySimilarity + 0.25 * monthSimilarity);
+    calendarCounts[n] += calendarSimilarity;
+    calendarSum += calendarSimilarity;
+
+    const ordinal = i + 1;
+    const ordinalSimilarity = recency * (
+      0.65 * (ordinal % 10 === targetOrdinal % 10 ? 1 : 0.10)
+      + 0.35 * (ordinal % 4 === targetOrdinal % 4 ? 1 : 0.25)
+    );
+    ordinalCounts[n] += ordinalSimilarity;
+    ordinalSum += ordinalSimilarity;
+  }
+  const calendarDen = calendarSum + 100 * params.alphaContext;
+  const ordinalDen = ordinalSum + 100 * params.alphaContext;
+  const baseByNumber = new Map(base.items.map(item => [Number(item.number), item]));
+  const probs = new Array(100);
+  const scored = new Array(100);
+  for (let n = 0; n < 100; n++) {
+    const baseItem = baseByNumber.get(n);
+    const pBase = base.probs[n];
+    const pCalendar = (calendarCounts[n] + params.alphaContext) / calendarDen;
+    const pOrdinal = (ordinalCounts[n] + params.alphaContext) / ordinalDen;
+    const mix = params.baseWeight * pBase
+      + params.calendarWeight * pCalendar
+      + params.ordinalWeight * pOrdinal;
+    probs[n] = mix;
+    scored[n] = {
+      ...baseItem,
+      score: Number((100 * mix).toFixed(5)),
+      components: {
+        ...baseItem.components,
+        calendar: Number((100 * pCalendar).toFixed(5)),
+        ordinal: Number((100 * pOrdinal).toFixed(5))
+      },
+      _mix: mix,
+      _calendar: pCalendar,
+      _ordinal: pOrdinal
+    };
+  }
+  scored.sort((a, b) => (b._mix - a._mix)
+    || (b._calendar - a._calendar)
+    || (b._ordinal - a._ordinal)
+    || (b.totalObserved - a.totalObserved)
+    || a.number.localeCompare(b.number));
+  const items = scored.map(({ _mix, _calendar, _ordinal, ...rest }) => rest);
+  return { items, probs };
+}
+
+export function rankPrize8V4(history, targetDate, options = {}, { includeRanking = false } = {}) {
+  const params = validateV4Parameters(options);
+  if (typeof targetDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate))
+    throw new Error('Ngày dự đoán không hợp lệ');
+  const past = normalizeHistory(history).filter(row => row.date < targetDate);
+  const cleanParams = Object.fromEntries([
+    'shortHalfLife', 'mediumHalfLife', 'digitHalfLife', 'shortWeight', 'mediumWeight',
+    'longWeight', 'digitWeight', 'uniformShrinkage', 'alpha', 'alphaDigit', 'baseWeight',
+    'calendarWeight', 'ordinalWeight', 'calendarHalfLife', 'alphaContext', 'topK'
+  ].map(key => [key, params[key]]));
+  if (past.length < MIN_HISTORY) return {
+    modelVersion: V4_MODEL_VERSION, targetDate, status: 'insufficient_history',
+    historyCount: past.length, windowUsed: past.length,
+    trainingStart: past[0]?.date || null, trainingEnd: past.at(-1)?.date || null,
+    top: [], params: cleanParams,
+    disclaimer: 'Điểm V4 là xếp hạng thống kê thử nghiệm, không phải xác suất trúng đã kiểm định.'
+  };
+  const { items } = evaluateV4Core(past, targetDate, params);
+  return {
+    modelVersion: V4_MODEL_VERSION, targetDate, status: 'experimental',
+    historyCount: past.length, windowUsed: past.length,
+    trainingStart: past[0].date, trainingEnd: past.at(-1).date,
+    top: items.slice(0, params.topK),
+    ...(includeRanking ? { ranking: items.map(item => item.number) } : {}),
+    params: cleanParams,
+    context: { targetOrdinal: past.length + 1, ...utcDateParts(targetDate) },
+    disclaimer: 'V4 bổ sung lịch và thứ tự kỳ nhưng vẫn chỉ là xếp hạng thử nghiệm; mỗi số 00–99 có mốc lý thuyết 1% trong kỳ quay công bằng.'
+  };
+}
+
+export function backtestPrize8V4(history, targetDate, options = {}) {
+  const p = validateV4Parameters(options);
+  if (typeof targetDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate))
+    throw new Error('Ngày kiểm định không hợp lệ');
+  const rows = normalizeHistory(history).filter(row => row.date < targetDate);
+  const start = Math.max(MIN_HISTORY, rows.length - p.backtestDraws);
+  const accV4 = createAccumulator();
+  const accV3 = createAccumulator();
+  let evaluated = 0;
+  for (let i = start; i < rows.length; i++) {
+    const train = rows.slice(0, i);
+    const target = rows[i];
+    recordEvaluation(accV4, evaluateV4Core(train, target.date, p), target.number, p.topK);
+    recordEvaluation(accV3, evaluateV3Core(train, p), target.number, p.topK);
+    evaluated++;
+  }
+  const v4 = summarizeAccumulator(accV4, evaluated, p.topK);
+  const v3 = summarizeAccumulator(accV3, evaluated, p.topK);
+  return {
+    modelVersion: V4_MODEL_VERSION,
+    evaluated,
+    evaluationStart: evaluated ? rows[start].date : null,
+    evaluationEnd: evaluated ? rows.at(-1).date : null,
+    top1: v4.top1,
+    topK: v4.topK,
+    models: { v4, v3 },
+    comparison: {
+      v4VsV3: {
+        top1DiffPoints: v4.top1.rate == null ? null : Number((v4.top1.rate - v3.top1.rate).toFixed(2)),
+        topKDiffPoints: v4.topK.rate == null ? null : Number((v4.topK.rate - v3.topK.rate).toFixed(2)),
+        logLossImprovement: v4.logLoss == null ? null : Number((v3.logLoss - v4.logLoss).toFixed(5)),
+        mrrDiff: v4.mrr == null ? null : Number((v4.mrr - v3.mrr).toFixed(5))
+      }
+    },
+    warning: evaluated < 30
+      ? 'Mẫu kiểm định nhỏ (< 30 kỳ), chưa đủ cơ sở kết luận.'
+      : 'Backtest quá khứ không chứng minh lợi thế cho kỳ quay công bằng tiếp theo.'
   };
 }

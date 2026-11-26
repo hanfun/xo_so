@@ -4,7 +4,8 @@ import {
   rankPrize8, backtestPrize8, normalizeHistory, validateParameters, analyzePrize8Distribution,
   rankPrize8V2, backtestPrize8V2, validateV2Parameters, analyzeHistoryCoverage, wilsonInterval,
   V2_MODEL_VERSION, UNIFORM_LOG_LOSS,
-  rankPrize8V3, backtestPrize8V3, validateV3Parameters, V3_MODEL_VERSION
+  rankPrize8V3, backtestPrize8V3, validateV3Parameters, V3_MODEL_VERSION,
+  rankPrize8V4, backtestPrize8V4, validateV4Parameters, V4_MODEL_VERSION
 } from '../src/prize8-predictor.js';
 import { createMysqlStore } from '../src/mysql-store.js';
 import { createAppServer } from '../src/server.js';
@@ -269,6 +270,17 @@ test('GET V2 prediction endpoints return benchmark comparison while keeping V1 c
     assert.equal(v3ViaParam.status,200);
     assert.equal((await v3ViaParam.json()).modelVersion,V3_MODEL_VERSION);
 
+    const v4Res=await fetch(`${base}/api/prize8/v4/predict?date=2026-11-24&province=dong-thap&topK=5&includeRanking=true`);
+    assert.equal(v4Res.status,200);
+    const v4Data=await v4Res.json();
+    assert.equal(v4Data.modelVersion,V4_MODEL_VERSION);
+    assert.equal(v4Data.forecast.top.length,5);
+    assert.equal(v4Data.forecast.ranking.length,100);
+    assert.ok(v4Data.backtest.models.v4 && v4Data.backtest.models.v3);
+
+    const badV4Sum=await fetch(`${base}/api/prize8/v4/predict?date=2026-11-24&province=dong-thap&baseWeight=90&calendarWeight=20&ordinalWeight=0`);
+    assert.equal(badV4Sum.status,400);
+
     const badV3Sum=await fetch(`${base}/api/prize8/v3/predict?date=2026-11-24&province=dong-thap&shortWeight=50&mediumWeight=50&longWeight=10&digitWeight=0&uniformShrinkage=0`);
     assert.equal(badV3Sum.status,400);
 
@@ -304,6 +316,21 @@ test('V3 ranking uses multi-horizon EWMA + decayed digit marginals, no leakage, 
   assert.ok(bt.models.v3.logLoss < bt.models.v2.logLoss);
   assert.ok(bt.comparison.v3VsV2.logLossImprovement > 0);
   assert.throws(()=>validateV3Parameters({shortWeight:0.5,mediumWeight:0.5,longWeight:0.2,digitWeight:0,uniformShrinkage:0}),/bằng 1/);
+});
+
+test('V4 adds date, month, weekday, and draw ordinal without future leakage',()=>{
+  const rows=history(120,'2023-01-02',i=>(i*19)%100);
+  const target=rows[90].date;
+  const clean=rows.slice(0,90);
+  const polluted=[...clean,{date:target,number:'99'},...rows.slice(91).map(row=>({...row,number:'99'}))];
+  const result=rankPrize8V4(clean,target,{topK:5},{includeRanking:true});
+  assert.equal(result.modelVersion,V4_MODEL_VERSION);
+  assert.equal(result.top.length,5);
+  assert.equal(result.ranking.length,100);
+  assert.equal(result.context.targetOrdinal,91);
+  assert.deepEqual(rankPrize8V4(polluted,target),rankPrize8V4(clean,target));
+  assert.deepEqual(backtestPrize8V4(polluted,target,{backtestDraws:40}),backtestPrize8V4(clean,target,{backtestDraws:40}));
+  assert.throws(()=>validateV4Parameters({baseWeight:0.8,calendarWeight:0.2,ordinalWeight:0.2}),/bằng 1/);
 });
 
 test('MySQL savePrize8Predictions is transactional, idempotent, and never overwrites existing predictions',async()=>{

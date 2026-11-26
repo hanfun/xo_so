@@ -9,8 +9,9 @@ import {
   rankPrize8, backtestPrize8, validateParameters, analyzePrize8Distribution,
   rankPrize8V2, backtestPrize8V2, validateV2Parameters, analyzeHistoryCoverage,
   V2_MODEL_VERSION, DEFAULT_V2_PARAMS,
-  rankPrize8V3, backtestPrize8V3, validateV3Parameters, V3_TOP5_WEIGHTS,
-  V3_MODEL_VERSION, DEFAULT_V3_PARAMS
+  rankPrize8V3, backtestPrize8V3, validateV3Parameters,
+  V3_MODEL_VERSION, DEFAULT_V3_PARAMS,
+  rankPrize8V4, backtestPrize8V4, validateV4Parameters, V4_MODEL_VERSION, DEFAULT_V4_PARAMS
 } from './prize8-predictor.js';
 import { stationsForDate, stationDetailsForDate, stationDisplayName, XSMN_SCHEDULE_VERSION } from './station-schedule.js';
 
@@ -102,7 +103,7 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
               if(completed.has(province)){skipped.push({province,name,reason:'already_exists'});continue;}
               if(!stationNames.has(province)){skipped.push({province,name,reason:'no_history'});continue;}
               const history=await db.getPrize8History({province,before:targetDate,limit:500});
-              const forecast=rankPrize8V3(history,targetDate,V3_TOP5_WEIGHTS,{includeRanking:true});
+              const forecast=rankPrize8V4(history,targetDate,{}, {includeRanking:true});
               if(forecast.status!=='experimental'||!forecast.trainingEnd) {
                 skipped.push({province,name,reason:'insufficient_history',historyCount:forecast.historyCount});
                 continue;
@@ -113,9 +114,9 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
                 trainingCutoff:forecast.trainingEnd,
                 items:forecast.top,
                 ranking:forecast.ranking,
-                modelKey:'prize8-v3-top5-daily',
-                modelVersion:`${V3_MODEL_VERSION}-top5-daily-${XSMN_SCHEDULE_VERSION}`,
-                description:'Xếp hạng Giải 8 V3 ưu tiên Top 5 theo ngày',
+                modelKey:'prize8-v4-calendar-top5-daily',
+                modelVersion:`${V4_MODEL_VERSION}-top5-daily-${XSMN_SCHEDULE_VERSION}`,
+                description:'Xếp hạng Giải 8 V4 có ngày, tháng, thứ và thứ tự kỳ',
                 parameters:forecast.params
               });
               if(saved && saved.created===false) {
@@ -147,19 +148,59 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
           return json(res,200,{province,name:results[0]?.name||province,results,hasMore:results.length===limit});
         } catch(e) {return json(res,400,{error:e.message});}
       }
-      if((url.pathname==='/api/prize8/predict' || url.pathname==='/api/prize8/v2/predict' || url.pathname==='/api/prize8/v3/predict') && req.method==='GET') {
-        const version = url.pathname==='/api/prize8/v3/predict'
+      if((url.pathname==='/api/prize8/predict' || url.pathname==='/api/prize8/v2/predict' || url.pathname==='/api/prize8/v3/predict' || url.pathname==='/api/prize8/v4/predict') && req.method==='GET') {
+        const version = url.pathname==='/api/prize8/v4/predict'
+          ? 'v4'
+          : (url.pathname==='/api/prize8/v3/predict'
           ? 'v3'
           : (url.pathname==='/api/prize8/v2/predict'
             ? 'v2'
-            : (url.searchParams.get('version') || 'v1').toLowerCase());
-        if(version!=='v1' && version!=='v2' && version!=='v3')
-          return json(res,400,{error:'Phiên bản mô hình chỉ hỗ trợ v1, v2 hoặc v3'});
+            : (url.searchParams.get('version') || 'v1').toLowerCase()));
+        if(!['v1','v2','v3','v4'].includes(version))
+          return json(res,400,{error:'Phiên bản mô hình chỉ hỗ trợ v1, v2, v3 hoặc v4'});
         const targetDate = url.searchParams.get('date') || vnClock().day;
         const province = url.searchParams.get('province') || '';
         if(!validDay(targetDate)) return json(res,400,{error:'Ngày dự đoán phải có định dạng YYYY-MM-DD'});
         if(!/^[a-zA-Z0-9_-]{1,100}$/.test(province))
           return json(res,400,{error:'Hãy chọn một đài xổ số miền Nam'});
+        if(version==='v4') {
+          const pct = (key, fallback) => Number(url.searchParams.get(key) ?? fallback * 100) / 100;
+          const parameters = {
+            shortHalfLife:Number(url.searchParams.get('shortHalfLife') ?? DEFAULT_V4_PARAMS.shortHalfLife),
+            mediumHalfLife:Number(url.searchParams.get('mediumHalfLife') ?? DEFAULT_V4_PARAMS.mediumHalfLife),
+            digitHalfLife:Number(url.searchParams.get('digitHalfLife') ?? DEFAULT_V4_PARAMS.digitHalfLife),
+            shortWeight:pct('shortWeight',DEFAULT_V4_PARAMS.shortWeight),
+            mediumWeight:pct('mediumWeight',DEFAULT_V4_PARAMS.mediumWeight),
+            longWeight:pct('longWeight',DEFAULT_V4_PARAMS.longWeight),
+            digitWeight:pct('digitWeight',DEFAULT_V4_PARAMS.digitWeight),
+            uniformShrinkage:pct('uniformShrinkage',DEFAULT_V4_PARAMS.uniformShrinkage),
+            baseWeight:pct('baseWeight',DEFAULT_V4_PARAMS.baseWeight),
+            calendarWeight:pct('calendarWeight',DEFAULT_V4_PARAMS.calendarWeight),
+            ordinalWeight:pct('ordinalWeight',DEFAULT_V4_PARAMS.ordinalWeight),
+            calendarHalfLife:Number(url.searchParams.get('calendarHalfLife') ?? DEFAULT_V4_PARAMS.calendarHalfLife),
+            alpha:Number(url.searchParams.get('alpha') ?? DEFAULT_V4_PARAMS.alpha),
+            alphaDigit:Number(url.searchParams.get('alphaDigit') ?? DEFAULT_V4_PARAMS.alphaDigit),
+            alphaContext:Number(url.searchParams.get('alphaContext') ?? DEFAULT_V4_PARAMS.alphaContext),
+            topK:Number(url.searchParams.get('topK') ?? 10),
+            backtestDraws:Number(url.searchParams.get('backtestDraws') ?? 80)
+          };
+          let validated;
+          try { validated=validateV4Parameters(parameters); }
+          catch(e) { return json(res,400,{error:e.message}); }
+          if(typeof db.getPrize8History!=='function')
+            return json(res,503,{error:'Cần MySQL để dự đoán giải 8'});
+          const history=await db.getPrize8History({province,before:targetDate,limit:500});
+          const coverage=analyzeHistoryCoverage(history,targetDate,province);
+          const forecast=rankPrize8V4(history,targetDate,validated,{
+            includeRanking:url.searchParams.get('includeRanking')==='true'
+          });
+          return json(res,200,{
+            modelVersion:V4_MODEL_VERSION,province,name:history.at(-1)?.name||province,
+            targetDate,historyCount:history.length,coverage,forecast,
+            backtest:backtestPrize8V4(history,targetDate,validated),
+            notes:'V4 bổ sung thứ, ngày trong tháng, tháng và thứ tự kỳ vào V3; mọi đặc trưng chỉ dùng dữ liệu trước ngày dự đoán.'
+          });
+        }
         if(version==='v3') {
           const parameters = {
             shortHalfLife:Number(url.searchParams.get('shortHalfLife') ?? DEFAULT_V3_PARAMS.shortHalfLife),

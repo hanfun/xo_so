@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import { createConfiguredStore } from './database.js';
-import { MIN_HISTORY, normalizeHistory, rankPrize8V2, rankPrize8V3, wilsonInterval } from './prize8-predictor.js';
+import {
+  MIN_HISTORY, normalizeHistory, rankPrize8V2, rankPrize8V3, rankPrize8V4, wilsonInterval
+} from './prize8-predictor.js';
 
 const candidates = [
   { name: 'V3', options: {} },
@@ -10,6 +12,19 @@ const candidates = [
   } },
   { name: 'V3-chu-so', options: {
     shortWeight: 0.20, mediumWeight: 0.10, longWeight: 0.15, digitWeight: 0.40
+  } }
+];
+
+const calendarCandidates = [
+  { name: 'V4-12-8', rank: rankPrize8V4, options: {} },
+  { name: 'V4-8-4', rank: rankPrize8V4, options: {
+    baseWeight: 0.88, calendarWeight: 0.08, ordinalWeight: 0.04
+  } },
+  { name: 'V4-6-2', rank: rankPrize8V4, options: {
+    baseWeight: 0.92, calendarWeight: 0.06, ordinalWeight: 0.02
+  } },
+  { name: 'V4-calendar', rank: rankPrize8V4, options: {
+    baseWeight: 0.90, calendarWeight: 0.10, ordinalWeight: 0
   } }
 ];
 
@@ -50,15 +65,22 @@ try {
   const stations = await store.listStations();
   const histories = await Promise.all(stations.map(async ({ code }) =>
     normalizeHistory(await store.getPrize8History({ province: code, before }))));
-  const configs = candidates.map(candidate => ({ ...candidate, rank: rankPrize8V3 }));
+  const configs = [
+    ...candidates.map(candidate => ({ ...candidate, rank: rankPrize8V3 })),
+    ...calendarCandidates
+  ];
   const tuning = measure(histories, '', split, configs);
   if (!tuning[0].evaluated) throw new Error('Không đủ dữ liệu trước mốc chia.');
   const selected = tuning.reduce((best, current) => current.hits > best.hits ? current : best).name;
   const comparison = [{ name: 'V2', rank: rankPrize8V2 }, configs[0]];
   if (selected !== 'V3') comparison.push(configs.find(model => model.name === selected));
+  for (const model of calendarCandidates) {
+    if (!comparison.some(item => item.name === model.name)) comparison.push(model);
+  }
   const holdout = measure(histories, split, before, comparison);
   console.log(JSON.stringify({
-    split, before, stations: stations.length, baselinePercent: 5, candidates, tuning, selected, holdout
+    split, before, stations: stations.length, baselinePercent: 5,
+    candidates: configs.map(({name, options}) => ({name, options})), tuning, selected, holdout
   }, null, 2));
 } finally {
   await store.close();

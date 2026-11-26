@@ -380,6 +380,12 @@ New daily snapshots use the experimental V3 short/long weights 15%/30% under a d
 
 Local run on November 25, 2026 (21 stations): tuning hits were 63, 61, 65, and 61 out of 1,196, respectively. The selected long-history variant scored 35/550 (6.36%, Wilson 95% CI 4.61–8.72%) versus 33/550 (6.00%, 4.30–8.31%) each for V2 and V3. This later period was excluded from grid selection in this run, but overlaps prior V3 research. Existing daily snapshots remain immutable.
 
+### V4 calendar/context experiment (`v4.0.0`)
+
+V4 retains the normalized V3 distribution and mixes it with two smoothed, past-only components: calendar similarity (weekday 40%, cyclic day-of-month 35%, cyclic month 25%) and station draw ordinal similarity (modulo 10 and modulo 4). Defaults are base/calendar/ordinal `80%/12%/8%`, calendar half-life `80` draws, and context smoothing `alphaContext=2`. The ordinal is the one-based position in the normalized history available to that station, so data coverage must be reviewed when interpreting it.
+
+Walk-forward benchmark on November 26, 2026 used 21 stations and a fixed split at `2026-06-01`. Before the split, V4 default scored `60/1196` Top-5 (`5.02%`) versus V3 `63/1196` (`5.27%`) and the previously selected V3-long variant `65/1196` (`5.43%`). On the later 559 draws, V4 default scored `36/559` (`6.44%`, Wilson 95% `4.69–8.79%`) versus V3/V2 `33/559` (`5.90%`) and V3-long `35/559` (`6.26%`). The intervals overlap the fair 5% baseline; treat the one-hit improvement as exploratory, not validated evidence. New immutable daily snapshots use V4; existing snapshots are never regenerated.
+
 A new agent's development work is complete only if:
 
 1. Changes are reflected in implementation, automated tests, and this documentation.
