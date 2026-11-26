@@ -213,6 +213,12 @@ Trong đó `province` là mã đài lấy từ `GET /api/stations`. API trả v�
 
 **Kiểm thử:**
 
+Để so sánh các cấu hình Top 5 trên MySQL cục bộ, chạy `npm run benchmark:top5 -- 2026-06-01 2026-11-23`. Lệnh dùng tối đa 500 kỳ mỗi đài, chọn cấu hình trên các kỳ trước mốc đầu, rồi so sánh với V2 và V3 từ mốc đầu đến trước mốc cuối. Mỗi lượt chỉ dùng lịch sử của cùng đài trước ngày quay.
+
+Các bản dự đoán hằng ngày mới dùng V3 với trọng số ngắn hạn 15% và dài hạn 30%. Trên giai đoạn kiểm tra, cấu hình đạt 35/550 (6,36%, Wilson 95% từ 4,61% đến 8,72%), còn V2 và V3 mặc định cùng đạt 33/550 (6,00%). Mốc ngẫu nhiên 5% nằm trong khoảng tin cậy này.
+
+Bản lưu mới giữ cả thứ tự 100 số trong metadata và vẫn trả 10 mục trong `top`. API hằng ngày trả `actualRank` và `top5Hit`. Bản lưu cũ chỉ xác định hạng nếu số xổ nằm trong 10 mục đã lưu. Endpoint V3 hỗ trợ `includeRanking=true` để trả thêm `forecast.ranking`. Màn hình Top 5 dùng phép tính này khi ngày được chọn chưa có bản lưu và ghi rõ đó là kết quả tính lại.
+
 ```bash
 npm test
 ```

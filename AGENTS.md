@@ -372,6 +372,14 @@ For each proposed change:
 
 ## 9. Definition of done
 
+### Benchmark Top 5 trên MySQL
+
+New daily snapshots use the experimental V3 short/long weights 15%/30% under a distinct model key and version. They store the full permutation in the first prediction row's metadata, keeping the persisted Top 10 rows and idempotency contract. Daily reads expose the actual rank across 100 numbers and `top5Hit`; legacy rows only support exact ranks within the saved Top 10. On-demand V3 defaults are unchanged and `includeRanking=true` opts into the full permutation.
+
+`npm run benchmark:top5 -- 2026-06-01 2026-11-23` reads up to 500 giải 8 rows per station. It selects a V3 configuration using only walk-forward hits before June 1, then compares the selected configuration with the existing V2 and V3 through November 22. The fixed grid is V3 defaults, doubled smoothing (alpha 2, alphaDigit 3), 15 points from short to long weight, and 10 points from short to digit weight. Ties favor the earlier grid entry. No seed is required.
+
+Local run on November 25, 2026 (21 stations): tuning hits were 63, 61, 65, and 61 out of 1,196, respectively. The selected long-history variant scored 35/550 (6.36%, Wilson 95% CI 4.61–8.72%) versus 33/550 (6.00%, 4.30–8.31%) each for V2 and V3. This later period was excluded from grid selection in this run, but overlaps prior V3 research. Existing daily snapshots remain immutable.
+
 A new agent's development work is complete only if:
 
 1. Changes are reflected in implementation, automated tests, and this documentation.

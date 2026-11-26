@@ -556,6 +556,7 @@ async function predictPrize8() {
 function dailyStatusMeta(item) {
   if(item.actual==null) return { text:'Chờ kết quả', cls:'daily-badge pending' };
   if(item.top1Hit) return { text:'Trúng Top 1 · #1', cls:'daily-badge hit-top1' };
+  if(item.top5Hit) return { text:`Trúng Top 5 · #${item.actualRank}`, cls:'daily-badge hit-top10' };
   if(item.top10Hit) return { text:`Trúng Top 10 · #${item.actualRank}`, cls:'daily-badge hit-top10' };
   return { text:'Ngoài Top 10', cls:'daily-badge miss' };
 }
@@ -617,10 +618,10 @@ function renderDailyPredictions(data) {
 
     const actualBar=el('div',item.actual!=null?'daily-actual has-actual':'daily-actual');
     if(item.actual!=null) {
-      const rankLabel=item.actualRank?`Hạng #${item.actualRank}/10`:'Ngoài Top 10';
+      const rankLabel=item.actualRank?`Hạng #${item.actualRank}`:'Ngoài Top 10 · bản lưu cũ';
       actualBar.append(
         el('div','daily-actual-num',`Giải 8: ${item.actual}`),
-        el('div','daily-actual-meta',`${rankLabel} · Top 1: ${item.top1Hit?'Đạt':'Không'} · Top 10: ${item.top10Hit?'Đạt':'Không'}`)
+        el('div','daily-actual-meta',`${rankLabel} · Top 5: ${item.top5Hit?'Đạt':'Không'} · Top 10: ${item.top10Hit?'Đạt':'Không'}`)
       );
     } else {
       actualBar.append(el('div','daily-actual-meta','Chưa có kết quả Giải 8 hôm nay — sẽ tự đối chiếu khi kết quả được quét.'));

@@ -101,7 +101,7 @@ function renderScheduledStations() {
   }
 }
 
-function renderTop5Result({ stationName, sourceLabel, trainingEnd, historyCount, items, actual, generatedAt, insufficientText }) {
+function renderTop5Result({ stationName, sourceLabel, trainingEnd, historyCount, items, actual, actualRank, generatedAt, insufficientText }) {
   const cards = $('top5Cards');
   const badgeWrap = $('top5StatusBadge');
   const banner = $('top5ActualBanner');
@@ -140,7 +140,9 @@ function renderTop5Result({ stationName, sourceLabel, trainingEnd, historyCount,
       el('strong', '', `Giải 8 thực tế (${stationName}): ${actual}`),
       el('span', '', isTop5
         ? `Nằm ở hạng #${hitRank}/5 trong danh sách dự đoán (${isTop1 ? 'Trúng Top 1' : 'Trúng Top 5'}).`
-        : 'Không nằm trong Top 5 dự đoán của đài này.')
+        : (actualRank
+          ? `Hạng #${actualRank} trong bảng xếp hạng · Ngoài Top 5 (${actualRank - 5} bậc).`
+          : 'Ngoài Top 10. Bản lưu cũ chỉ có 10 hạng đầu.'))
     );
   } else {
     badgeWrap.append(el('span', 'daily-badge pending', 'Chờ kết quả'));
@@ -184,6 +186,7 @@ async function loadTop5ForSelected() {
       historyCount: null,
       items: saved.top.slice(0, 5),
       actual,
+      actualRank: saved.actualRank ?? saved.top.find(item => item.number === actual)?.rank,
       generatedAt: saved.generatedAt
     });
     return;
@@ -197,7 +200,10 @@ async function loadTop5ForSelected() {
     const params = new URLSearchParams({
       date: selectedDate,
       province: station.code,
-      topK: '5'
+      topK: '5',
+      shortWeight: '15',
+      longWeight: '30',
+      includeRanking: 'true'
     });
     const data = await api(`/api/prize8/v3/predict?${params}`);
     if (station.code !== selectedStation) return;
@@ -211,11 +217,12 @@ async function loadTop5ForSelected() {
     }
     renderTop5Result({
       stationName: data.name || station.name,
-      sourceLabel: `Mô hình V3 (${data.modelVersion})`,
+      sourceLabel: `Tính lại bằng V3 ưu tiên Top 5 (${data.modelVersion})`,
       trainingEnd: data.forecast.trainingEnd,
       historyCount: data.forecast.historyCount,
       items: data.forecast.top.slice(0, 5),
       actual,
+      actualRank: (data.forecast.ranking?.indexOf(actual) ?? -1) + 1,
       generatedAt: null
     });
   } catch (e) {

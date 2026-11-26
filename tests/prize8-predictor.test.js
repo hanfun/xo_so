@@ -255,6 +255,13 @@ test('GET V2 prediction endpoints return benchmark comparison while keeping V1 c
     const v3Data=await v3Res.json();
     assert.equal(v3Data.modelVersion,V3_MODEL_VERSION);
     assert.equal(v3Data.forecast.top.length,10);
+    assert.equal(v3Data.forecast.ranking,undefined);
+    const fullRes=await fetch(`${base}/api/prize8/v3/predict?date=2026-11-24&province=dong-thap&topK=5&shortWeight=15&longWeight=30&includeRanking=true`);
+    assert.equal(fullRes.status,200);
+    const {forecast:full}=await fullRes.json();
+    assert.equal(new Set(full.ranking).size,100);
+    assert.ok(full.ranking.includes('00'));
+    assert.deepEqual(full.ranking.slice(0,5),full.top.map(item=>item.number));
     assert.equal(v3Data.backtest.evaluated,80);
     assert.ok(v3Data.backtest.models.v3 && v3Data.backtest.models.v2 && v3Data.backtest.models.v1 && v3Data.backtest.models.raw && v3Data.backtest.models.uniform);
 
@@ -378,6 +385,7 @@ test('MySQL getDailyPredictions computes actual rank and Top 1 / Top 10 status p
   assert.equal(hcm.actual,'05');
   assert.equal(hcm.actualRank,2);
   assert.equal(hcm.top1Hit,false);
+  assert.equal(hcm.top5Hit,true);
   assert.equal(hcm.top10Hit,true);
   assert.equal(hcm.status,'top10_hit');
 
@@ -387,6 +395,16 @@ test('MySQL getDailyPredictions computes actual rank and Top 1 / Top 10 status p
   assert.equal(cm.top1Hit,null);
   assert.equal(cm.top10Hit,null);
   assert.equal(cm.status,'pending');
+
+  const ranking=Array.from({length:100},(_,i)=>String(i).padStart(2,'0'));
+  rows.splice(0,rows.length,{...rows[0],predicted_value:'00',actual:'17',
+    metadata_json:JSON.stringify({rank:1,ranking})});
+  const [outside]=await db.getDailyPredictions('2026-11-23');
+  assert.equal(outside.actualRank,18);
+  assert.equal(outside.top5Hit,false);
+  assert.equal(outside.top10Hit,false);
+  assert.equal(outside.status,'miss');
+  assert.equal(outside.top.length,1);
 });
 
 test('daily prediction API is strictly idempotent, handles concurrency, and auto-evaluates when actual results arrive',async()=>{

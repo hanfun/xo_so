@@ -9,7 +9,7 @@ import {
   rankPrize8, backtestPrize8, validateParameters, analyzePrize8Distribution,
   rankPrize8V2, backtestPrize8V2, validateV2Parameters, analyzeHistoryCoverage,
   V2_MODEL_VERSION, DEFAULT_V2_PARAMS,
-  rankPrize8V3, backtestPrize8V3, validateV3Parameters,
+  rankPrize8V3, backtestPrize8V3, validateV3Parameters, V3_TOP5_WEIGHTS,
   V3_MODEL_VERSION, DEFAULT_V3_PARAMS
 } from './prize8-predictor.js';
 import { stationsForDate, stationDetailsForDate, stationDisplayName, XSMN_SCHEDULE_VERSION } from './station-schedule.js';
@@ -102,7 +102,7 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
               if(completed.has(province)){skipped.push({province,name,reason:'already_exists'});continue;}
               if(!stationNames.has(province)){skipped.push({province,name,reason:'no_history'});continue;}
               const history=await db.getPrize8History({province,before:targetDate,limit:500});
-              const forecast=rankPrize8V3(history,targetDate,DEFAULT_V3_PARAMS);
+              const forecast=rankPrize8V3(history,targetDate,V3_TOP5_WEIGHTS,{includeRanking:true});
               if(forecast.status!=='experimental'||!forecast.trainingEnd) {
                 skipped.push({province,name,reason:'insufficient_history',historyCount:forecast.historyCount});
                 continue;
@@ -112,9 +112,10 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
                 targetDate,
                 trainingCutoff:forecast.trainingEnd,
                 items:forecast.top,
-                modelKey:'prize8-v3-daily',
-                modelVersion:`${V3_MODEL_VERSION}-daily-${XSMN_SCHEDULE_VERSION}`,
-                description:'Xếp hạng Giải 8 V3 tự động theo ngày',
+                ranking:forecast.ranking,
+                modelKey:'prize8-v3-top5-daily',
+                modelVersion:`${V3_MODEL_VERSION}-top5-daily-${XSMN_SCHEDULE_VERSION}`,
+                description:'Xếp hạng Giải 8 V3 ưu tiên Top 5 theo ngày',
                 parameters:forecast.params
               });
               if(saved && saved.created===false) {
@@ -181,7 +182,9 @@ export function createAppServer({collector,store=null,dataDir=DATA_DIR,publicDir
             return json(res,503,{error:'Cần MySQL để dự đoán giải 8'});
           const history=await db.getPrize8History({province,before:targetDate,limit:500});
           const coverage=analyzeHistoryCoverage(history,targetDate,province);
-          const forecast=rankPrize8V3(history,targetDate,p);
+          const forecast=rankPrize8V3(history,targetDate,p,{
+            includeRanking:url.searchParams.get('includeRanking')==='true'
+          });
           const evaluation=backtestPrize8V3(history,targetDate,p);
           return json(res,200,{
             modelVersion:V3_MODEL_VERSION,

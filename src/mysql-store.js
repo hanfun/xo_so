@@ -148,6 +148,7 @@ export function createMysqlStore({ pool }) {
     targetDate,
     trainingCutoff,
     items,
+    ranking,
     modelKey = 'prize8-v2-daily',
     modelVersion,
     description = 'Xếp hạng Giải 8 tự động theo ngày',
@@ -188,6 +189,7 @@ export function createMysqlStore({ pool }) {
           VALUES (?,?,?,?,?,NULL,?,?)`,[models.insertId,provinceId,targetDate,'prize8_top10',item.number,
           trainingCutoff,JSON.stringify({
             rank:index+1,
+            ...(index===0 && ranking ? { ranking } : {}),
             score:item.score,
             observed:item.observed ?? null,
             totalObserved:item.totalObserved ?? null,
@@ -228,8 +230,10 @@ export function createMysqlStore({ pool }) {
         modelKey:row.model_key?String(row.model_key):null,
         modelVersion:row.model_version?String(row.model_version):null,
         actual:row.actual==null?null:String(row.actual),
-        top:[]
+        top:[],
+        ranking:null
       });
+      if(Array.isArray(metadata.ranking)) grouped.get(row.province).ranking=metadata.ranking;
       grouped.get(row.province).top.push({
         number:String(row.predicted_value),
         rank:Number(metadata.rank ?? (grouped.get(row.province).top.length+1)),
@@ -239,12 +243,14 @@ export function createMysqlStore({ pool }) {
         lastSeen:metadata.lastSeen ?? null
       });
     }
-    return [...grouped.values()].map(group=>{
-      const actualRank=group.actual?(group.top.find(x=>x.number===group.actual)?.rank??null):null;
-      const top1Hit=group.actual?group.top[0]?.number===group.actual:null;
-      const top10Hit=group.actual?group.top.some(x=>x.number===group.actual):null;
+    return [...grouped.values()].map(({ranking,...group})=>{
+      const fullRank=group.actual==null?0:(ranking?.indexOf(group.actual)??-1)+1;
+      const actualRank=fullRank || (group.top.find(x=>x.number===group.actual)?.rank??null);
+      const top1Hit=group.actual==null?null:actualRank===1;
+      const top5Hit=group.actual==null?null:actualRank!==null&&actualRank<=5;
+      const top10Hit=group.actual==null?null:actualRank!==null&&actualRank<=10;
       const status=group.actual==null?'pending':(top1Hit?'top1_hit':(top10Hit?'top10_hit':'miss'));
-      return { ...group, actualRank, top1Hit, top10Hit, status };
+      return { ...group, actualRank, top1Hit, top5Hit, top10Hit, status };
     });
   }
   return { readDay,listHistory,listStations,writeDay,getStats,getPrize8History,getStationHistory,

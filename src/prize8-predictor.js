@@ -58,6 +58,8 @@ export const DEFAULT_V3_PARAMS = Object.freeze({
   backtestDraws: 80
 });
 
+export const V3_TOP5_WEIGHTS = Object.freeze({ shortWeight: 0.15, longWeight: 0.30 });
+
 export function validateParameters(params = {}) {
   const p = { ...DEFAULT_PARAMS, ...params };
   if (!Number.isInteger(p.window) || p.window < MIN_HISTORY || p.window > 200)
@@ -772,7 +774,7 @@ function evaluateV3Core(allPast, params) {
   return { items, probs };
 }
 
-export function rankPrize8V3(history, targetDate, options = {}) {
+export function rankPrize8V3(history, targetDate, options = {}, { includeRanking = false } = {}) {
   const params = validateV3Parameters(options);
   if (typeof targetDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate))
     throw new Error('Ngày dự đoán không hợp lệ');
@@ -814,6 +816,7 @@ export function rankPrize8V3(history, targetDate, options = {}) {
     trainingStart: past[0].date,
     trainingEnd: past.at(-1).date,
     top: items.slice(0, params.topK),
+    ...(includeRanking ? { ranking: items.map(item => item.number) } : {}),
     params: cleanParams,
     disclaimer: 'Điểm xếp hạng V3 (đa khung thời gian + biên đầu/đuôi suy giảm + làm mịn Dirichlet) là chỉ số thống kê thử nghiệm, KHÔNG phải xác suất trúng đã kiểm định. Mỗi số 00–99 có xác suất lý thuyết 1% trong kỳ quay công bằng.'
   };
