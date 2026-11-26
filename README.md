@@ -219,6 +219,20 @@ Các bản dự đoán hằng ngày mới dùng V4: 80% phân phối V3, 12% tư
 
 Bản lưu mới giữ cả thứ tự 100 số trong metadata và vẫn trả 10 mục trong `top`. API hằng ngày trả `actualRank` và `top5Hit`. Bản lưu cũ chỉ xác định hạng nếu số xổ nằm trong 10 mục đã lưu. Endpoint V3 hỗ trợ `includeRanking=true` để trả thêm `forecast.ranking`. Màn hình Top 5 dùng phép tính này khi ngày được chọn chưa có bản lưu và ghi rõ đó là kết quả tính lại.
 
+## Chạy trên máy chủ và lưu JSON dự phòng
+
+### GitHub Pages
+
+Trên địa chỉ `*.github.io`, giao diện tự chọn dữ liệu JSON. Bản chạy qua `npm start` dùng API MySQL và cơ chế lưu dự phòng. Lệnh `npm run build:pages` xuất trang tĩnh vào `pages-dist/`, lấy kết quả từ bản backup và các file ngày trong thư mục `data/`. Chỉ dữ liệu kết quả được đưa vào gói trang tĩnh.
+
+Trong cài đặt Pages của repo, chọn nguồn **GitHub Actions** rồi chạy workflow **Deploy JSON dashboard to GitHub Pages**. Mỗi lần xuất bản lấy dữ liệu có trong checkout của workflow. Để đổi bản dữ liệu gốc khi build tại máy, truyền đường dẫn backup qua `npm run build:pages -- <file-json>`.
+
+GitHub Pages đọc bộ dữ liệu đã xuất bản. Top 5 V4 tính trong trình duyệt dựa trên kết quả trước ngày được chọn và được hiển thị dưới nhãn tính lại để đối chiếu. Để đưa kết quả mới lên trang, cập nhật dữ liệu nguồn và xuất bản lại.
+
+Chạy `npm ci` và `npm start` trên máy chủ Node.js. Đặt `HOST=0.0.0.0` nếu nền tảng yêu cầu và gắn ổ đĩa lưu trữ bền vững vào thư mục `XSKT_DATA_DIR`. Chạy một tiến trình ứng dụng trên ổ này. Khi triển khai qua proxy, cấu hình HTTPS và giới hạn quyền truy cập các API ghi dữ liệu.
+
+Khi MySQL gặp lỗi kết nối, ứng dụng và lệnh `npm run collect` lưu kết quả vào `XSKT_DATA_DIR/YYYY-MM-DD.json`. Danh sách lịch sử và API xem kết quả đọc được các ngày dự phòng. Khi MySQL phục hồi, lần ghi tiếp theo dùng lại MySQL. Thống kê và dự đoán vẫn cần MySQL, và các tệp dự phòng chưa được đồng bộ tự động vào cơ sở dữ liệu.
+
 ```bash
 npm test
 ```

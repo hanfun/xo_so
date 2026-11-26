@@ -40,7 +40,9 @@ function setNotice(message, tone = '') {
   $('todayNotice').className = `notice ${tone}`;
 }
 
+const githubPages = location.hostname.endsWith('.github.io');
 async function api(path, options) {
+  if (githubPages) return (await import('./pages-api.js')).pagesApi(path);
   const response = await fetch(path, options);
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
@@ -181,7 +183,9 @@ async function loadTop5ForSelected() {
   if (saved && Array.isArray(saved.top) && saved.top.length) {
     renderTop5Result({
       stationName: saved.name || station.name,
-      sourceLabel: `Bản lưu bất biến (${saved.modelVersion || 'MySQL'})`,
+      sourceLabel: saved.modelVersion?.includes('-replay-')
+        ? 'Bảng V4 tính lại để đối chiếu'
+        : `Bản lưu bất biến (${saved.modelVersion || 'MySQL'})`,
       trainingEnd: saved.trainingCutoff,
       historyCount: null,
       items: saved.top.slice(0, 5),
@@ -193,7 +197,7 @@ async function loadTop5ForSelected() {
   }
 
   $('top5Title').textContent = `Top 5 Giải 8 — ${station.name}`;
-  $('top5Meta').textContent = 'Đang tính toán xếp hạng V3 từ lịch sử MySQL...';
+  $('top5Meta').textContent = 'Đang tính toán xếp hạng V4 từ lịch sử MySQL...';
   $('top5Cards').replaceChildren(el('p', 'placeholder', 'Đang tải dữ liệu xếp hạng...'));
 
   try {
@@ -201,11 +205,9 @@ async function loadTop5ForSelected() {
       date: selectedDate,
       province: station.code,
       topK: '5',
-      shortWeight: '15',
-      longWeight: '30',
       includeRanking: 'true'
     });
-    const data = await api(`/api/prize8/v3/predict?${params}`);
+    const data = await api(`/api/prize8/v4/predict?${params}`);
     if (station.code !== selectedStation) return;
     if (data.forecast.status === 'insufficient_history') {
       const need = Math.max(0, 20 - data.forecast.windowUsed);
@@ -217,7 +219,7 @@ async function loadTop5ForSelected() {
     }
     renderTop5Result({
       stationName: data.name || station.name,
-      sourceLabel: `Tính lại bằng V3 ưu tiên Top 5 (${data.modelVersion})`,
+      sourceLabel: `Tính lại bằng V4 (${data.modelVersion})`,
       trainingEnd: data.forecast.trainingEnd,
       historyCount: data.forecast.historyCount,
       items: data.forecast.top.slice(0, 5),
@@ -384,7 +386,12 @@ async function bootstrap() {
     today = status.today;
     todayStationsFallback = Array.isArray(status.today_stations) ? status.today_stations : [];
     $('todayDateInput').max = today;
-    await loadScreenForDate(today, { ensureDaily: true });
+    await loadScreenForDate(today);
+    if (githubPages) $('btnScanToday').hidden = true;
+    else void api('/api/opening-sync', { method: 'POST' }).then(async ({errors}) => {
+      await loadScreenForDate(selectedDate || today);
+      if (errors.length) setNotice('Một số ngày chưa cập nhật được kết quả hoặc Top 5.');
+    }).catch(() => setNotice('Chưa hoàn tất tự động cập nhật lịch sử.'));
   } catch (e) {
     setNotice(`Không kết nối được máy chủ: ${e.message}`, 'error');
   }

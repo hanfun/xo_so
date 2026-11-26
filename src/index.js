@@ -5,7 +5,7 @@ import { createScheduler, SLOTS } from './scheduler.js';
 import { HOST, PORT, vnClock, prevDay } from './config.js';
 
 async function main() {
-  const store = await createConfiguredStore();
+  const store = await createConfiguredStore({ jsonFallback: true });
   const collector = createCollector({ store });
   const server = createAppServer({ collector, store });
   const scheduler = createScheduler({
@@ -17,7 +17,7 @@ async function main() {
     onError: e => console.error('[CRON]', e.message)
   });
   server.listen(PORT, HOST, () => {
-    console.log(`XSMN Local: http://${HOST}:${PORT}`);
+    console.log(`XSMN: http://${HOST}:${PORT} | MySQL + JSON fallback`);
     console.log(`Lưu MySQL local | giờ Việt Nam | lịch ${SLOTS.map(s => s.label).join(', ')}`);
     scheduler.start();
     const clock = vnClock();

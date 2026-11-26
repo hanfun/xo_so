@@ -9,6 +9,30 @@ import {
 } from '../src/prize8-predictor.js';
 import { createMysqlStore } from '../src/mysql-store.js';
 import { createAppServer } from '../src/server.js';
+import { prevDay, vnClock } from '../src/config.js';
+
+test('opening sync fills a previous missing day once even without prediction storage', async () => {
+  const missing = prevDay(vnClock().day);
+  const collected = [];
+  const store = {
+    readDay: async day => day === missing && !collected.includes(day)
+      ? null
+      : { status: 'complete_by_provider_count' }
+  };
+  const server = createAppServer({ store, collector: {
+    collect: async day => { collected.push(day); }
+  } });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const sync = () => fetch(`http://127.0.0.1:${server.address().port}/api/opening-sync`, { method: 'POST' })
+      .then(response => response.json());
+    assert.deepEqual(await sync(), { errors: [] });
+    assert.deepEqual(await sync(), { errors: [] });
+    assert.deepEqual(collected, [missing]);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
 
 function history(count, start='2020-01-01', choose=i=>i%100) {
   const origin=new Date(start+'T12:00:00.000Z');
