@@ -28,8 +28,26 @@ const calendarCandidates = [
   } }
 ];
 
+// Under independent uniform draws, each past-only Top 5 has a 5% hit chance.
+function top5TailProbability(hits, draws) {
+  if (!draws) return null;
+  if (!hits) return 1;
+  const mass = new Float64Array(hits + 1);
+  mass[0] = 1;
+  for (let draw = 0; draw < draws; draw++) {
+    mass[hits] += 0.05 * mass[hits - 1];
+    for (let k = Math.min(draw + 1, hits - 1); k > 0; k--) {
+      mass[k] = 0.95 * mass[k] + 0.05 * mass[k - 1];
+    }
+    mass[0] *= 0.95;
+  }
+  return mass[hits];
+}
+
 function measure(stations, from, before, models) {
   const hits = models.map(() => 0);
+  const rankSums = models.map(() => 0);
+  const distanceSums = models.map(() => 0);
   let evaluated = 0;
   for (const history of stations) {
     for (let i = MIN_HISTORY; i < history.length; i++) {
@@ -38,15 +56,22 @@ function measure(stations, from, before, models) {
       const training = history.slice(0, i);
       evaluated++;
       models.forEach(({ rank, options }, j) => {
-        const { top } = rank(training, date, { ...options, topK: 5 });
+        const { top, ranking } = rank(training, date, { ...options, topK: 5 }, { includeRanking: true });
         hits[j] += Number(top.some(item => item.number === number));
+        if (ranking) {
+          const position = ranking.indexOf(number) + 1;
+          rankSums[j] += position;
+          distanceSums[j] += Math.max(0, position - 5);
+        }
       });
     }
   }
   return models.map(({ name }, i) => ({
     name, evaluated, hits: hits[i],
     rate: evaluated ? Number((100 * hits[i] / evaluated).toFixed(2)) : null,
-    ci95: wilsonInterval(hits[i], evaluated)
+    ci95: wilsonInterval(hits[i], evaluated),
+    avgRank: rankSums[i] ? Number((rankSums[i] / evaluated).toFixed(2)) : null,
+    avgDistanceToTop5: rankSums[i] ? Number((distanceSums[i] / evaluated).toFixed(2)) : null
   }));
 }
 
@@ -77,7 +102,10 @@ try {
   for (const model of calendarCandidates) {
     if (!comparison.some(item => item.name === model.name)) comparison.push(model);
   }
-  const holdout = measure(histories, split, before, comparison);
+  const holdout = measure(histories, split, before, comparison).map(result => ({
+    ...result,
+    exploratoryPValueVsUniform: top5TailProbability(result.hits, result.evaluated)
+  }));
   console.log(JSON.stringify({
     split, before, stations: stations.length, baselinePercent: 5,
     candidates: configs.map(({name, options}) => ({name, options})), tuning, selected, holdout
