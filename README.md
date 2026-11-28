@@ -223,9 +223,9 @@ Bản lưu mới giữ cả thứ tự 100 số trong metadata và vẫn trả 1
 
 ### GitHub Pages
 
-Trên địa chỉ `*.github.io`, giao diện tự chọn dữ liệu JSON. Bản chạy qua `npm start` dùng API MySQL và cơ chế lưu dự phòng. Lệnh `npm run build:pages` xuất trang tĩnh vào `pages-dist/`, lấy kết quả từ bản backup và các file ngày trong thư mục `data/`. Chỉ dữ liệu kết quả được đưa vào gói trang tĩnh.
+Trên địa chỉ `*.github.io`, giao diện tự chọn dữ liệu JSON. Bản chạy qua `npm start` dùng API MySQL và cơ chế lưu dự phòng. Lệnh `npm run build:pages` xuất trang tĩnh vào `pages-dist/`, lấy kết quả từ file duy nhất `data/results.json`. Chỉ dữ liệu kết quả được đưa vào gói trang tĩnh.
 
-Trong cài đặt Pages của repo, chọn nguồn **GitHub Actions** rồi chạy workflow **Deploy JSON dashboard to GitHub Pages**. Mỗi lần xuất bản lấy dữ liệu có trong checkout của workflow. Để đổi bản dữ liệu gốc khi build tại máy, truyền đường dẫn backup qua `npm run build:pages -- <file-json>`.
+Trong cài đặt Pages của repo, chọn nguồn **GitHub Actions** rồi chạy workflow **Deploy JSON dashboard to GitHub Pages**. Mỗi lần xuất bản lấy dữ liệu có trong checkout của workflow. Để build từ một bộ dữ liệu tương thích khác, truyền `npm run build:pages -- <file-results-json>`.
 
 GitHub Pages đọc bộ dữ liệu đã xuất bản. Top 5 V4 tính trong trình duyệt dựa trên kết quả trước ngày được chọn và được hiển thị dưới nhãn tính lại để đối chiếu. Để đưa kết quả mới lên trang, cập nhật dữ liệu nguồn và xuất bản lại.
 
@@ -243,7 +243,7 @@ Có thêm test cho thuật toán trọng số, giữ số 0 đầu, backtest kh�
 
 ### Đồng bộ JSON khi mở GitHub Pages (không cron)
 
-Worker chỉ đọc/ghi `data/YYYY-MM-DD.json` của ngày hiện tại theo giờ Việt Nam. Nếu trang đã có đủ đài và đủ giải thì không gọi Worker; nếu Worker đọc được file đủ kết quả thì không gọi nguồn xổ số. Từ 17:00, dữ liệu thiếu được bổ sung từ nguồn hiện có; kết quả đã hợp lệ được giữ nguyên. Không ghi file rỗng hoặc commit khi không có kết quả mới. GitHub Contents API dùng SHA để tránh ghi đè khi có nhiều lượt truy cập. Cache 5 phút theo điểm hiện diện Cloudflare và trong trình duyệt, không phải giới hạn toàn cầu.
+Worker đọc/ghi file chung `data/results.json`, theo ngày được chọn (trong phạm vi 30 ngày gần nhất). Nếu trang đã có đủ đài và đủ giải thì không gọi Worker; nếu Worker đọc được file đủ kết quả thì không gọi nguồn xổ số. Từ 17:00, dữ liệu thiếu được bổ sung từ nguồn hiện có; kết quả đã hợp lệ được giữ nguyên. Không ghi file rỗng hoặc commit khi không có kết quả mới. GitHub Contents API dùng SHA để tránh ghi đè khi có nhiều lượt truy cập. Cache 5 phút theo điểm hiện diện Cloudflare và trong trình duyệt, không phải giới hạn toàn cầu.
 
 Cài đặt một lần:
 1. Tạo GitHub fine-grained personal access token chỉ cho `hanfun/xo_so` với quyền Contents: Read and write. Không đưa token vào frontend, file cấu hình, hay commit.
@@ -252,11 +252,17 @@ Cài đặt một lần:
 4. Điền URL Worker thực tế vào `public/pages-sync-config.js` (chỉ URL, không có token), commit và push. Workflow Pages tự build lại. Cần cho phép Pages deploy từ GitHub Actions.
 5. Mở index.html hoặc today.html sau 17:00. Worker trả kết quả ngay sau khi lưu; push dữ liệu bằng PAT sẽ kích hoạt Pages build để cập nhật lịch sử. Kiểm tra tab Actions và thư mục data/. CORS chỉ cho origin https://hanfun.github.io; kiểm tra Origin không phải xác thực chống bot. Với lưu lượng lớn cần rate limit ở Cloudflare.
 
-Mặc định URL Worker để trống cho tới khi deploy thật; site vẫn đọc JSON đã xuất bản. Không ảnh hưởng MySQL local. `.gitignore` vẫn bỏ qua backup MySQL/JSON local; Worker dùng Contents API để ghi đúng file ngày, không upload backup database. Không tự backfill ngày cũ. Worker không chứa lịch chạy định kỳ. Nguồn bên thứ ba có thể chưa sẵn sàng hoặc lỗi; khi đó giữ dữ liệu hiện có và thử lại sau khoảng 5 phút.
+Mặc định URL Worker để trống cho tới khi deploy thật; site vẫn đọc JSON đã xuất bản. Không ảnh hưởng MySQL local. `.gitignore` vẫn bỏ qua backup MySQL/JSON local; Worker dùng Contents API để cập nhật đúng khóa ngày trong file chung, không upload backup database. Không tự backfill ngày cũ. Worker không chứa lịch chạy định kỳ. Nguồn bên thứ ba có thể chưa sẵn sàng hoặc lỗi; khi đó giữ dữ liệu hiện có và thử lại sau khoảng 5 phút.
 
 ### Dự phòng trình duyệt khi chưa có Worker
 
 Nếu JSON hôm nay thiếu, sau 17:00 Pages thử nguồn trực tiếp bằng GET CORS (nguồn chính rồi nguồn phụ khi lỗi). Kết quả hợp lệ lưu theo ngày trong LocalStorage, hoặc bộ nhớ phiên nếu trình duyệt chặn lưu. Không gửi lại khi ngày đã đủ; lần thử thất bại được giới hạn 5 phút trên trình duyệt. Không thể ghi repository từ trình duyệt; chỉ Worker đã cấu hình mới lưu file lên GitHub. Nếu API chặn CORS, giao diện báo lỗi và giữ dữ liệu đã có. CI mock nguồn ngoài; CORS thực tế cần kiểm tra trên trình duyệt.
 
 ### Đồng bộ ngày được chọn (2026-11-28)
-Bấm Hôm qua hoặc chọn ngày bất kỳ không ở tương lai: Pages kiểm tra JSON và cache của chính ngày đó, rồi lấy nguồn ngoài nếu chưa đủ. Chỉ hôm nay phải chờ 17:00. Cache và lần thử được tách riêng theo ngày. Worker (khi được triển khai) nhận /sync?date=YYYY-MM-DD và ghi file ngày tương ứng trong 30 ngày gần nhất để giới hạn phạm vi ghi công khai; ngày cũ hơn dùng nguồn trực tiếp nếu CORS cho phép. Không có cron, không tự quét mọi ngày bị thiếu. Khi URL Worker còn trống, chỉ lưu LocalStorage/phiên trình duyệt, không ghi repository. Cần deploy lại Worker sau khi cập nhật mã.
+Bấm Hôm qua hoặc chọn ngày bất kỳ không ở tương lai: Pages kiểm tra JSON và cache của chính ngày đó, rồi lấy nguồn ngoài nếu chưa đủ. Chỉ hôm nay phải chờ 17:00. Cache và lần thử được tách riêng theo ngày. Worker (khi được triển khai) nhận /sync?date=YYYY-MM-DD và cập nhật khóa ngày tương ứng trong file chung trong 30 ngày gần nhất để giới hạn phạm vi ghi công khai; ngày cũ hơn dùng nguồn trực tiếp nếu CORS cho phép. Không có cron, không tự quét mọi ngày bị thiếu. Khi URL Worker còn trống, chỉ lưu LocalStorage/phiên trình duyệt, không ghi repository. Cần deploy lại Worker sau khi cập nhật mã.
+
+### Một file JSON chung cho GitHub Pages (2026-11-28)
+- `data/results.json` là nguồn dữ liệu trực tuyến duy nhất, dạng object có khóa YYYY-MM-DD và giá trị là report XSMN. Đã khởi tạo từ 690 ngày (2.169 lượt theo đài) trong backup đến 23/11/2026.
+- Worker đọc SHA và toàn bộ dataset, bổ sung đúng ngày, giữ các ngày khác, commit bằng SHA. Nếu có cập nhật đồng thời (kể cả hai ngày khác nhau), đọc lại file mới nhất và hợp nhất trước khi thử lại. Khi file lớn hơn 1 MB, đọc Git blob theo SHA. Không tự tạo file rỗng nếu file gốc bị mất.
+- Build Pages sao chép dữ liệu chung ra `pages-dist/results.json` (artifact, không commit). Backup MySQL cũ được giữ nguyên để khôi phục; các file JSON ngày local vẫn là dự phòng local, không tham gia nguồn Pages.
+- Chỉ sau khi Worker deploy và cấu hình secret/URL thì cập nhật trên GitHub hoạt động; browser fallback vẫn chỉ lưu tại thiết bị. Không tạo cron. File chung phù hợp quy mô hiện tại; khi lớn lên nên cân nhắc chia dữ liệu hoặc database.

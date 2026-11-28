@@ -6,6 +6,7 @@ pages-dist/
 !.env.example
 logs/
 data/*.json
+!data/results.json
 data/*.db
 *.sql.gz
 *.log

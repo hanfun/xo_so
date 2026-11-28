@@ -401,10 +401,12 @@ A new agent's development work is complete only if:
 
 - Local MySQL remains unchanged; do not commit local DB backups or credentials.
 - `src/lottery-core.js` is runtime-neutral; `src/lottery.js` retains Node source configuration. `src/pages-sync-core.js` validates scheduled stations and complete prize sets, merges only new valid stations, and performs optimistic SHA retries.
-- `worker/index.js` is an opt-in Cloudflare Worker. It uses a repository-scoped GITHUB_TOKEN secret and writes only today's public lottery report to `data/YYYY-MM-DD.json`. It never accepts client-supplied prize values or dates.
+- `worker/index.js` is an opt-in Cloudflare Worker. It uses a repository-scoped GITHUB_TOKEN secret and updates only the requested recent public lottery report inside `data/results.json`. It never accepts client-supplied prize values or dates.
 - Pages reads the published dataset first; only incomplete current dates invoke the configured Worker. Keep URL configuration separate from secrets. Pages workflow rebuilds on data changes. No cron or automatic historical backfill. Per-location cache and SHA protection are not global rate limiting.
 - Setup instructions in README. Add/maintain tests in tests/pages-sync.test.js. Distinguish repository code from an actually deployed Worker.
 
 - Browser fallback: `src/pages-browser-sync.js` is used by Pages if Worker is absent or unavailable, with validated per-day LocalStorage and simple CORS GET. Never claim browser storage is a GitHub commit. Tests mock providers and storage; verify real CORS separately.
 
 - 2026-11-28: selected-date sync replaces today-only restriction. Browser accepts valid dates <= Vietnam today; only today has 17:00 gate. Worker accepts a date query within recent 30 days; historical direct browser fallback is available outside that window. Preserve per-date cache/locking and never claim localStorage is a GitHub file. No scheduled backfill.
+
+- 2026-11-28: Online results have one canonical dataset, `data/results.json` (date-keyed reports). `src/github-results-store.js` loads the whole versioned dataset, handles raw blob retrieval for files >1 MB, uses SHA CAS to preserve concurrent cross-date updates, and refuses missing/corrupt source files. `src/build-pages.js` publishes that dataset; the old MySQL backup is retained solely as an archive. Local JSON fallback remains unchanged. Do not write per-day online files.
