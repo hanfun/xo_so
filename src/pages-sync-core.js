@@ -39,12 +39,20 @@ export function mergeReports(previous, incoming, day) {
   }};
 }
 
+export function isPastOrToday(day, today) {
+  return typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day)
+    && Number.isFinite(Date.parse(day+'T00:00:00Z'))
+    && new Date(day+'T00:00:00Z').toISOString().slice(0,10) === day
+    && day <= today;
+}
 // Dependency injection keeps the update path testable without GitHub credentials.
-export async function syncToday({ read, write, fetchDay, now = new Date() }) {
-  const { day, hour } = vietnamClock(now);
+export async function syncDate({ read, write, fetchDay, now = new Date(), date }) {
+  const { day: today, hour } = vietnamClock(now);
+  const day = date ?? today;
+  if (!isPastOrToday(day,today)) return {date:day,report:null,status:'invalid_date'};
   let existing = await read(day);
   if (isCompleteReport(existing.report, day)) return { date: day, report: existing.report, status: 'complete' };
-  if (hour < 17) return { date: day, report: existing.report, status: 'before_opening' };
+  if (day === today && hour < 17) return { date: day, report: existing.report, status: 'before_opening' };
   let incoming;
   try {
     const { payload, sourceUrl } = await fetchDay(day);
@@ -64,3 +72,5 @@ export async function syncToday({ read, write, fetchDay, now = new Date() }) {
   }
   return { date: day, report: existing.report, status: 'retry_later' };
 }
+
+export function syncToday(options) { return syncDate(options); }

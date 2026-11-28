@@ -257,3 +257,6 @@ Mặc định URL Worker để trống cho tới khi deploy thật; site vẫn �
 ### Dự phòng trình duyệt khi chưa có Worker
 
 Nếu JSON hôm nay thiếu, sau 17:00 Pages thử nguồn trực tiếp bằng GET CORS (nguồn chính rồi nguồn phụ khi lỗi). Kết quả hợp lệ lưu theo ngày trong LocalStorage, hoặc bộ nhớ phiên nếu trình duyệt chặn lưu. Không gửi lại khi ngày đã đủ; lần thử thất bại được giới hạn 5 phút trên trình duyệt. Không thể ghi repository từ trình duyệt; chỉ Worker đã cấu hình mới lưu file lên GitHub. Nếu API chặn CORS, giao diện báo lỗi và giữ dữ liệu đã có. CI mock nguồn ngoài; CORS thực tế cần kiểm tra trên trình duyệt.
+
+### Đồng bộ ngày được chọn (2026-11-28)
+Bấm Hôm qua hoặc chọn ngày bất kỳ không ở tương lai: Pages kiểm tra JSON và cache của chính ngày đó, rồi lấy nguồn ngoài nếu chưa đủ. Chỉ hôm nay phải chờ 17:00. Cache và lần thử được tách riêng theo ngày. Worker (khi được triển khai) nhận /sync?date=YYYY-MM-DD và ghi file ngày tương ứng trong 30 ngày gần nhất để giới hạn phạm vi ghi công khai; ngày cũ hơn dùng nguồn trực tiếp nếu CORS cho phép. Không có cron, không tự quét mọi ngày bị thiếu. Khi URL Worker còn trống, chỉ lưu LocalStorage/phiên trình duyệt, không ghi repository. Cần deploy lại Worker sau khi cập nhật mã.

@@ -1,5 +1,5 @@
 import { fetchDay, extractSouthPayload, normalizePayload } from './lottery-core.js';
-import { vietnamClock, mergeReports, isCompleteReport } from './pages-sync-core.js';
+import { vietnamClock, mergeReports, isCompleteReport, isPastOrToday } from './pages-sync-core.js';
 
 const prefix = 'xskt-browser-day-v1:';
 const retryMs = 300_000;
@@ -22,71 +22,77 @@ export async function fetchBrowserDay(day, fetchImpl = fetch) {
 }
 export function createBrowserSync({ storage = browserStorage(), now = () => new Date(),
   fetchSource = fetchBrowserDay, fetchImpl = (...args) => fetch(...args), workerUrl = '' } = {}) {
-  let pending, lastAttempt;
-  return async function sync(days, today) {
+  const pending = new Map(), lastAttempt = new Map();
+  return async function sync(days, day) {
     const clock = vietnamClock(now());
-    if (clock.day !== today) return;
-    const key = prefix + today;
-    const published = days[today];
-    if (isCompleteReport(published,today) && published.storage_mode !== 'browser') return;
+    if (!isPastOrToday(day,clock.day)) return;
+    const key = prefix + day;
+    const published = days[day];
+    if (isCompleteReport(published,day) && !['browser','memory'].includes(published.storage_mode)) return;
     const cache = read(storage,key);
-    if (cache?.report?.date === today) {
-      const merged = mergeReports(published,cache.report,today);
-      if (merged.changed) days[today] = {...merged.report,storage_mode:'browser'};
+    if (cache?.report?.date === day) {
+      const merged = mergeReports(published,cache.report,day);
+      if (merged.changed) days[day] = {...merged.report,storage_mode:'browser'};
     }
-    if (!workerUrl && isCompleteReport(days[today],today)) return;
-    if (clock.hour < 17) return;
-    if (pending?.date === today) return pending.promise;
+    if (!workerUrl && isCompleteReport(days[day],day)) return;
+    if (day === clock.day && clock.hour < 17) return;
+    if (pending.has(day)) return pending.get(day);
     const timestamp = now().getTime();
-    const attempt = Math.max(lastAttempt?.date === today ? lastAttempt.at : 0,
+    const attempt = Math.max(lastAttempt.get(day) || 0,
       Number(cache?.attemptAt) || 0);
     if (timestamp - attempt >= 0 && timestamp - attempt < retryMs) {
-      if (cache?.status === 'source_unavailable' && !isCompleteReport(days[today],today))
-        days[today] = {...(days[today] ?? {date:today,count:0,results:[]}),sync_status:'source_unavailable'};
+      if (cache?.status === 'source_unavailable' && !isCompleteReport(days[day],day))
+        days[day] = {...(days[day] ?? {date:day,count:0,results:[]}),sync_status:'source_unavailable'};
       return;
     }
     const promise = (async () => {
       let workerFailed = false;
       if (workerUrl) {
         try {
-          const res = await fetchImpl(new URL('/sync',workerUrl), {signal:AbortSignal.timeout(45_000)});
+          const url = new URL('/sync',workerUrl);
+          url.searchParams.set('date',day);
+          const res = await fetchImpl(url, {signal:AbortSignal.timeout(45_000)});
           if (!res.ok) throw Error('Worker HTTP ' + res.status);
           const update = await res.json();
-          if (update.date !== today) throw Error('Worker returned wrong date');
+          if (update.date !== day) throw Error('Worker returned wrong date');
           if (update.report) {
-            const merged = mergeReports(days[today],update.report,today);
-            if (merged.changed) days[today] = {...merged.report,storage_mode:'github'};
-            if (isCompleteReport(update.report,today)) {
-              days[today] = {...update.report,storage_mode:'github'};
+            const merged = mergeReports(days[day],update.report,day);
+            if (merged.changed) {
+              const githubCodes = new Set(update.report.results?.map(row=>row.province) ?? []);
+              const browserOnly = merged.report.results.some(row=>!githubCodes.has(row.province));
+              days[day] = {...merged.report,storage_mode:browserOnly?'browser':'github'};
+            }
+            if (isCompleteReport(update.report,day)) {
+              days[day] = {...update.report,storage_mode:'github'};
               return;
             }
           }
           workerFailed = !['updated','complete','no_change','before_opening'].includes(update.status);
         } catch { workerFailed = true; }
       }
-      if (isCompleteReport(days[today],today)) return;
+      if (isCompleteReport(days[day],day)) return;
       // An available Worker remains authoritative. Direct fetch is a fallback.
       if (workerUrl && !workerFailed) return;
       try {
-        const {payload,sourceUrl} = await fetchSource(today,fetchImpl);
-        const incoming = normalizePayload(today,extractSouthPayload(today,payload),sourceUrl);
-        const merged = mergeReports(days[today],incoming,today);
-        if (merged.changed) days[today] = {...merged.report,storage_mode:'browser',sync_status:'updated'};
-        else days[today] = {...(days[today] ?? {date:today,count:0,results:[]}),sync_status:'no_change'};
+        const {payload,sourceUrl} = await fetchSource(day,fetchImpl);
+        const incoming = normalizePayload(day,extractSouthPayload(day,payload),sourceUrl);
+        const merged = mergeReports(days[day],incoming,day);
+        if (merged.changed) days[day] = {...merged.report,storage_mode:'browser',sync_status:'updated'};
+        else days[day] = {...(days[day] ?? {date:day,count:0,results:[]}),sync_status:'no_change'};
       } catch {
-        days[today] = {...(days[today] ?? {date:today,count:0,results:[]}),sync_status:'source_unavailable'};
+        days[day] = {...(days[day] ?? {date:day,count:0,results:[]}),sync_status:'source_unavailable'};
       }
     })();
-    lastAttempt = {date:today,at:timestamp};
-    pending = {date:today,promise};
+    lastAttempt.set(day,timestamp);
+    pending.set(day,promise);
     try { await promise; }
     finally {
-      const report = days[today];
+      const report = days[day];
       // Never persist empty reports as valid results, only the retry metadata.
       const persisted = save(storage,key,{attemptAt:timestamp,status:report?.sync_status,
         report:report?.storage_mode === 'browser' && report.count ? report : null});
       if (report?.storage_mode === 'browser' && !persisted) report.storage_mode = 'memory';
-      if (pending?.promise === promise) pending = null;
+      if (pending.get(day) === promise) pending.delete(day);
     }
   };
 }

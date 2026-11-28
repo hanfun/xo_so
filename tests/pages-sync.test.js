@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { syncToday, isCompleteReport } from '../src/pages-sync-core.js';
+import { syncToday, syncDate, isCompleteReport } from '../src/pages-sync-core.js';
 import { stationsForDate } from '../src/station-schedule.js';
 const day = '2026-11-26', now = new Date(day + 'T11:00:00Z');
 const codes = stationsForDate(day);
@@ -49,4 +49,17 @@ test('failed provider preserves previous data', async () => {
   const prior=report(codes.slice(0,1));
   const r=await syncToday({now,read:async()=>({report:prior,sha:'a'}),fetchDay:async()=>{throw Error('offline');},write:()=>assert.fail('write')});
   assert.equal(r.status,'source_unavailable');assert.deepEqual(r.report,prior);
+});
+
+test('historical day can be persisted in morning',async()=>{
+ const r=await syncDate({date:day,now:new Date('2026-11-27T03:00:00Z'),
+  read:async()=>({report:null,sha:null}),fetchDay:source(codes),
+  write:async(target,value)=>{assert.equal(target,day);assert.equal(isCompleteReport(value,day),true);return true;}});
+ assert.equal(r.status,'updated');
+});
+test('future and invalid dates never read or write',async()=>{
+ for(const target of ['2026-11-27','2026-02-30','bad']){
+  const r=await syncDate({date:target,now,read:()=>assert.fail('read'),write:()=>assert.fail('write'),fetchDay:()=>assert.fail('fetch')});
+  assert.equal(r.status,'invalid_date');
+ }
 });

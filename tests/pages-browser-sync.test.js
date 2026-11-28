@@ -48,3 +48,24 @@ test('Worker can persist a complete browser cache later',async()=>{
  }})(days,day);
  assert.equal(calls,1);assert.equal(days[day].storage_mode,'github');
 });
+
+test('yesterday fetches before todays opening and reuses its own cache',async()=>{
+ const store=storage(), nextMorning=new Date('2026-11-27T03:00:00Z'); let calls=0;
+ const opts={storage:store,now:()=>nextMorning,fetchSource:async target=>{assert.equal(target,day);calls++;return provider();}};
+ const days={};await createBrowserSync(opts)(days,day);
+ assert.equal(days[day].count,3);
+ const reload={};await createBrowserSync(opts)(reload,day);
+ assert.equal(reload[day].count,3);assert.equal(calls,1);
+});
+test('future and malformed dates do not call source',async()=>{
+ const sync=createBrowserSync({storage:storage(),now:()=>date,fetchSource:()=>assert.fail('fetch')});
+ await sync({},'2026-11-27');await sync({},'2026-02-30');await sync({},'bad');
+});
+test('Worker receives selected historical date',async()=>{
+ let calls=0;const days={};
+ await createBrowserSync({storage:storage(),now:()=>new Date('2026-11-27T03:00:00Z'),workerUrl:'https://example.test',fetchImpl:async url=>{
+  calls++;assert.equal(url.searchParams.get('date'),day);
+  return new Response(JSON.stringify({date:day,status:'updated',report:{date:day,count:3,results:codes.map(draw)}}));
+ }})(days,day);
+ assert.equal(calls,1);assert.equal(days[day].storage_mode,'github');
+});

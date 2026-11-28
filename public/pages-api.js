@@ -6,7 +6,7 @@ import {
 import { stationDetailsForDate } from './station-schedule.js';
 import { createBrowserSync } from './pages-browser-sync.js';
 import { workerUrl } from './pages-sync-config.js';
-const maybeSyncToday = createBrowserSync({workerUrl});
+const maybeSyncDate = createBrowserSync({workerUrl});
 
 let dataset;
 async function loadDataset() {
@@ -38,7 +38,7 @@ export async function pagesApi(request) {
     throw new Error('GitHub Pages đọc kết quả từ lần xuất bản JSON gần nhất.');
   }
   const days = await loadDataset();
-  if (date === today) await maybeSyncToday(days, today);
+  if (['/api/day','/api/prize8/daily'].includes(pathname)) await maybeSyncDate(days, date);
   if (pathname === '/api/day') return days[date] ?? { date, count: 0, results: [] };
   if (pathname === '/api/history') return { dates: Object.keys(days).sort().reverse() };
   const draws = Object.values(days).flatMap(day => day.results);

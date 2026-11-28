@@ -249,7 +249,7 @@ function renderResultsBoard() {
     empty.append(
       el('div', 'empty-icon', '◷'),
       el('strong', '', `Chưa có kết quả XSMN ngày ${selectedDate.split('-').reverse().join('/')}`),
-      el('p', '', 'XSMN mở thưởng lúc 16:15 giờ Việt Nam. Website tự kiểm tra từ 17:00 nếu chưa đủ kết quả; bạn có thể bấm “Làm mới”.')
+      el('p', '', 'XSMN mở thưởng lúc 16:15 giờ Việt Nam. Website tự kiểm tra ngày đã chọn nếu thiếu kết quả; riêng hôm nay sẽ lấy từ 17:00.')
     );
     root.append(empty);
     return;
@@ -417,7 +417,7 @@ $('btnScanToday').addEventListener('click', () => { void scanSelectedDate(); });
 
 void bootstrap();
 setInterval(() => {
-  if (!scanning && selectedDate && selectedDate === today) {
-    void loadScreenForDate(today, { ensureDaily: false });
+  if (!scanning && selectedDate) {
+    void loadScreenForDate(selectedDate, { ensureDaily: false });
   }
 }, 60_000);

@@ -406,3 +406,5 @@ A new agent's development work is complete only if:
 - Setup instructions in README. Add/maintain tests in tests/pages-sync.test.js. Distinguish repository code from an actually deployed Worker.
 
 - Browser fallback: `src/pages-browser-sync.js` is used by Pages if Worker is absent or unavailable, with validated per-day LocalStorage and simple CORS GET. Never claim browser storage is a GitHub commit. Tests mock providers and storage; verify real CORS separately.
+
+- 2026-11-28: selected-date sync replaces today-only restriction. Browser accepts valid dates <= Vietnam today; only today has 17:00 gate. Worker accepts a date query within recent 30 days; historical direct browser fallback is available outside that window. Preserve per-date cache/locking and never claim localStorage is a GitHub file. No scheduled backfill.

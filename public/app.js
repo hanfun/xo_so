@@ -32,7 +32,7 @@ function notice(message,tone='') {
 const githubPages = location.hostname.endsWith('.github.io');
 const dataSource = githubPages ? 'JSON / nguồn trực tiếp' : 'kho dữ liệu local';
 $('storageLabel').textContent = githubPages ? 'JSON trên GitHub Pages' : 'MySQL local · JSON dự phòng';
-if(githubPages) $('updateSchedule').textContent='Đọc JSON đã lưu; nếu thiếu kết quả hôm nay, tự kiểm tra nguồn từ 17:00.';
+if(githubPages) $('updateSchedule').textContent='Đọc JSON đã lưu; nếu ngày đã chọn thiếu kết quả, tự kiểm tra nguồn (hôm nay từ 17:00).';
 async function api(path,options) {
   if(githubPages) return (await import('./pages-api.js')).pagesApi(path);
   const response=await fetch(path,options);
