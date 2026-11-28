@@ -4,7 +4,9 @@
   "private": true,
   "description": "Node.js local dashboard and MySQL analytics for Vietnam southern lottery",
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test",
@@ -14,7 +16,8 @@
     "db:export": "node src/db-backup.js export",
     "db:import": "node src/db-backup.js import",
     "collect": "node src/cli.js",
-    "history:import": "node src/history.js"
+    "history:import": "node src/history.js",
+    "benchmark:v5": "node src/prize8-v5-research.js"
   },
   "dependencies": {
     "dotenv": "^16.6.1",

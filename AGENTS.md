@@ -410,3 +410,6 @@ A new agent's development work is complete only if:
 - 2026-11-28: selected-date sync replaces today-only restriction. Browser accepts valid dates <= Vietnam today; only today has 17:00 gate. Worker accepts a date query within recent 30 days; historical direct browser fallback is available outside that window. Preserve per-date cache/locking and never claim localStorage is a GitHub file. No scheduled backfill.
 
 - 2026-11-28: Online results have one canonical dataset, `data/results.json` (date-keyed reports). `src/github-results-store.js` loads the whole versioned dataset, handles raw blob retrieval for files >1 MB, uses SHA CAS to preserve concurrent cross-date updates, and refuses missing/corrupt source files. `src/build-pages.js` publishes that dataset; the old MySQL backup is retained solely as an archive. Local JSON fallback remains unchanged. Do not write per-day online files.
+
+## V5 research (2026-11-28)
+See `docs/V5_RESEARCH.md` and `npm run benchmark:v5`. V5 candidates are experimental; no production change. Normalize TP.HCM aliases in research, freeze all same-day data, and retain uniform baseline. Do not infer winning advantage from exploratory backtests.
